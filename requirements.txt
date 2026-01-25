@@ -1,0 +1,6 @@
+requests>=2.32.0,<3
+beautifulsoup4>=4.12.2,<5
+cairosvg>=2.7.0,<3
+PyYAML>=6.0,<7
+
+

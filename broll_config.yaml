@@ -1,0 +1,11 @@
+# Example configuration for the b-roll pipeline
+images_per_entity: 4
+image_duration_seconds: 3
+min_gap_seconds: 1
+broll_track_count: 4
+broll_track_name_prefix: "B-roll"
+allow_non_pd: false
+llm:
+  provider: openai
+  model: gpt-4o-mini
+
