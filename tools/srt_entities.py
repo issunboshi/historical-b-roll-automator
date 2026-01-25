@@ -142,14 +142,17 @@ def call_llm_extract(
     """
     system_prompt = (
         "You extract named entities from transcript cues. Return strict JSON with keys: "
-        "people, places, concepts, events, primary. 'primary' must be a single string naming the one entity the cue is most about, "
-        "and it must also appear in one of the arrays; if none, set it to an empty string. Use short, canonical names. No extra keys. "
+        "people, places, concepts, events, primary. Each entity in the arrays must be an object with 'name' (the surface form as it appears) "
+        "and 'canonical' (the full, unambiguous Wikipedia-style name). Example: "
+        '{"name": "Obama", "canonical": "Barack Obama"}, {"name": "JFK", "canonical": "John F. Kennedy"}. '
+        "'primary' must be a single string naming the canonical form of the one entity the cue is most about, "
+        "and it must match a canonical in one of the arrays; if none, set it to an empty string. No extra keys. "
         "If none, use empty arrays. "
         "Vagueness rule: If an entity is too vague to be useful on its own relative to the transcript's subject "
         "(e.g., an event that is just a year like '1947', or 'elections' with only a year and no country, or a "
-        "movement/revolution with no geographic qualifier), then append the transcript subject to the end of the "
-        "entity name. Example: '1947 elections' -> '1947 elections Venezuela' when the subject is 'Venezuela'. "
-        "Important: Prefer canonical entities likely to have a standalone Wikipedia page. Do NOT output relative-time phrases "
+        "movement/revolution with no geographic qualifier), then append the transcript subject to the canonical name. "
+        "Example: '1947 elections' -> canonical '1947 elections Venezuela' when the subject is 'Venezuela'. "
+        "Important: Prefer canonical names likely to have a standalone Wikipedia page. Do NOT output relative-time phrases "
         "such as '100 years later the Federal War in Venezuela'; instead, extract the underlying canonical entity name, e.g., "
         "'Federal War (Venezuela)' or 'Federal War Venezuela'. Avoid generic temporal descriptors ('years later', 'decades ago')."
     )
@@ -195,16 +198,38 @@ def call_llm_extract(
         return {"people": [], "places": [], "concepts": [], "events": [], "primary": ""}
     try:
         parsed = json.loads(match.group(0))
+        # Preserve both old (string) and new (object with name/canonical) formats
+        # _parse_entity_list handles both formats downstream
         result = {
-            "people": list(dict.fromkeys([s.strip() for s in parsed.get("people", []) if isinstance(s, str)])),
-            "places": list(dict.fromkeys([s.strip() for s in parsed.get("places", []) if isinstance(s, str)])),
-            "concepts": list(dict.fromkeys([s.strip() for s in parsed.get("concepts", []) if isinstance(s, str)])),
-            "events": list(dict.fromkeys([s.strip() for s in parsed.get("events", []) if isinstance(s, str)])),
+            "people": parsed.get("people", []) if isinstance(parsed.get("people"), list) else [],
+            "places": parsed.get("places", []) if isinstance(parsed.get("places"), list) else [],
+            "concepts": parsed.get("concepts", []) if isinstance(parsed.get("concepts"), list) else [],
+            "events": parsed.get("events", []) if isinstance(parsed.get("events"), list) else [],
             "primary": parsed.get("primary") if isinstance(parsed.get("primary", ""), str) else "",
         }
         return result
     except Exception:
         return {"people": [], "places": [], "concepts": [], "events": [], "primary": ""}
+
+
+def _parse_entity_list(raw_list: list) -> List[Tuple[str, str]]:
+    """Parse entity list, handling both old (string) and new (object) formats.
+
+    Returns list of (surface_name, canonical_name) tuples.
+    """
+    results = []
+    for item in raw_list:
+        if isinstance(item, str):
+            name = item.strip()
+            if name:
+                results.append((name, name))  # canonical = name for old format
+        elif isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            canonical = (item.get("canonical") or name).strip()
+            if name:
+                results.append((name, canonical if canonical else name))
+    return results
+
 
 def _srt_time_to_seconds(tc: str) -> float:
     """
@@ -253,6 +278,30 @@ def _looks_like_wikipedia_entity(name: str, kind: str) -> bool:
     return True
 
 
+def _merge_by_canonical(
+    entities: Dict[str, Dict],
+    canonical: str,
+    surface_name: str,
+    kind: str,
+    occurrence: Dict,
+) -> None:
+    """Add occurrence to entity, merging by canonical name.
+
+    Creates a new entity entry if canonical doesn't exist, otherwise merges
+    the occurrence and adds the surface_name as an alias.
+    """
+    if canonical not in entities:
+        entities[canonical] = {
+            "entity_type": kind,
+            "images": [],
+            "occurrences": [],
+            "aliases": set(),
+        }
+    entity = entities[canonical]
+    entity["occurrences"].append(occurrence)
+    entity["aliases"].add(surface_name)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Extract entities per SRT cue and emit entities_map.json")
     parser.add_argument("--srt", required=True, help="Path to SRT transcript")
@@ -293,9 +342,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             openai_api_base=openai_api_base,
             ollama_host=ollama_host,
         )
-        # Update place frequency regardless of throttling
-        for nm in (ent.get("places") or []):
-            nn = _normalize_entity_name(nm, "places", args.subject)
+        # Update place frequency regardless of throttling (use canonical names)
+        for surface, canonical in _parse_entity_list(ent.get("places") or []):
+            nn = _normalize_entity_name(canonical, "places", args.subject)
             if nn:
                 place_counts[nn] = place_counts.get(nn, 0) + 1
 
@@ -307,17 +356,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             emitted_names_in_window = set()
 
         # Normalize and filter all candidates in this cue
-        # Map normalized name -> (kind, original_name)
+        # Map canonical_name -> (kind, surface_name)
         normalized: Dict[str, Tuple[str, str]] = {}
         for kind in ("people", "places", "events", "concepts"):
-            for nm in (ent.get(kind) or []):
-                nn = _normalize_entity_name(nm, kind, args.subject)
+            for surface, canonical in _parse_entity_list(ent.get(kind) or []):
+                nn = _normalize_entity_name(canonical, kind, args.subject)
                 if not nn:
                     continue
                 if not _looks_like_wikipedia_entity(nn, kind):
                     continue
                 if nn not in normalized:
-                    normalized[nn] = (kind, nm)
+                    normalized[nn] = (kind, surface)
 
         # Determine primary candidate
         primary_name: Optional[str] = None
@@ -338,24 +387,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                     primary_name, primary_kind = cand, k
                     break
 
-        # Collect names to emit for this cue
-        to_emit: List[Tuple[str, str]] = []
+        # Collect names to emit for this cue: (canonical, surface_name, kind)
+        to_emit: List[Tuple[str, str, str]] = []
         if not emitted_primary_in_window and primary_name and (primary_name not in emitted_names_in_window):
-            to_emit.append((primary_name, primary_kind or "concepts"))
+            surface = normalized[primary_name][1] if primary_name in normalized else primary_name
+            to_emit.append((primary_name, surface, primary_kind or "concepts"))
             emitted_primary_in_window = True
             emitted_names_in_window.add(primary_name)
 
         # Allow multiple people/places within the same 5s window
-        for nm, (kk, _) in normalized.items():
-            if kk in ("people", "places") and nm not in emitted_names_in_window:
-                to_emit.append((nm, kk))
-                emitted_names_in_window.add(nm)
+        for canonical, (kk, surface) in normalized.items():
+            if kk in ("people", "places") and canonical not in emitted_names_in_window:
+                to_emit.append((canonical, surface, kk))
+                emitted_names_in_window.add(canonical)
 
-        # Append selected occurrences
-        for nm, knd in to_emit:
-            if nm not in entities:
-                entities[nm] = {"entity_type": knd, "images": [], "occurrences": []}
-            entities[nm]["occurrences"].append({"timecode": cue.start, "cue_idx": cue.index})
+        # Append selected occurrences using merge (handles aliases)
+        for canonical, surface, knd in to_emit:
+            _merge_by_canonical(
+                entities,
+                canonical,
+                surface,
+                knd,
+                {"timecode": cue.start, "cue_idx": cue.index},
+            )
 
         # Log brief stats
         try:
@@ -414,16 +468,34 @@ def main(argv: Optional[List[str]] = None) -> int:
             if new_name in new_entities:
                 # Merge occurrences; keep earliest type if conflict
                 new_entities[new_name]["occurrences"].extend(data.get("occurrences", []))
+                # Merge aliases
+                existing_aliases = new_entities[new_name].get("aliases", set())
+                new_aliases = data.get("aliases", set())
+                if isinstance(existing_aliases, list):
+                    existing_aliases = set(existing_aliases)
+                if isinstance(new_aliases, list):
+                    new_aliases = set(new_aliases)
+                new_entities[new_name]["aliases"] = existing_aliases | new_aliases
                 # Images remain combined (both empty at this stage)
                 if not new_entities[new_name].get("entity_type"):
                     new_entities[new_name]["entity_type"] = kind
             else:
+                aliases = data.get("aliases", set())
+                if isinstance(aliases, list):
+                    aliases = set(aliases)
                 new_entities[new_name] = {
                     "entity_type": kind,
                     "images": data.get("images", []),
                     "occurrences": list(data.get("occurrences", [])),
+                    "aliases": aliases,
                 }
         entities = new_entities
+
+    # Convert alias sets to sorted lists for JSON serialization
+    for name, data in entities.items():
+        aliases = data.get("aliases", set())
+        if isinstance(aliases, set):
+            data["aliases"] = sorted(aliases)
 
     out = {"entities": entities, "source_srt": os.path.abspath(args.srt)}
     with open(args.out, "w", encoding="utf-8") as f:
