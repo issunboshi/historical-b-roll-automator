@@ -82,4 +82,5 @@ venv.bak/
 # macOS
 .DS_Store
 
-
+# Project output files
+output/
