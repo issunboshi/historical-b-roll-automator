@@ -2,37 +2,70 @@
 
 **Analysis Date:** 2026-01-25
 
+## CRITICAL: Security Issues
+
+**Exposed OpenAI API Key in .env file (CRITICAL):**
+- Issue: `.env` file contains plaintext OPENAI_API_KEY and has been committed to git repository history
+- Files: `.env` (tracked in git history)
+- Risk: API key is publicly visible in `git log`; compromised credentials expose OpenAI account to abuse
+- Current mitigation: `.env` is in `.gitignore` for future commits, but key already exposed in history
+- Recommendations:
+  1. **IMMEDIATELY** revoke exposed key at https://platform.openai.com/account/api-keys
+  2. Generate new API key and use only in local .env (not committed)
+  3. Clean git history: Use `git filter-branch` or `git-filter-repo` to remove .env from all commits
+  4. Force-push cleaned history (after notifying team)
+  5. For future: Use environment variable or secret management system (never commit credentials)
+  6. Example for local setup:
+     ```bash
+     # Create local .env (not tracked)
+     echo "OPENAI_API_KEY=sk-new-key-here" > .env
+     # Verify .gitignore has .env
+     ```
+
 ## Tech Debt
 
 **Duplicate imports in wikipedia_image_downloader.py:**
-- Issue: `random` module is imported twice (lines 26-27)
-- Files: `wikipedia_image_downloader.py`
-- Impact: Minor code hygiene issue, could confuse readers about intentionality
+- Issue: `import random` appears twice on lines 26-27
+- Files: `wikipedia_image_downloader.py` (lines 26-27)
+- Impact: Minor code hygiene issue; Python silently ignores duplicate but indicates careless code review
 - Fix approach: Remove one duplicate import statement
 
 **Silent exception handling with pass statements:**
 - Issue: Multiple locations catch broad `Exception` with no logging or recovery (lines 903-904, 920-921, 937-938, 967-968, 984-985, 1006-1007, 1027-1028 in `wikipedia_image_downloader.py`)
-- Files: `wikipedia_image_downloader.py` (lines 903, 920, 937, 967, 984, 1006, 1027)
+- Files: `wikipedia_image_downloader.py` (lines 173, 292, 369, 682, 741, 753, 780, 903, 920, 937, 967, 984, 1006, 1027, 1046, 1074)
 - Impact: Errors during CSV writing and failure recording are silently ignored, making debugging difficult when records don't persist
 - Fix approach: Add logging statement or at least store error count before continuing
 
 **Inconsistent error handling in srt_entities.py:**
 - Issue: JSON parsing failure silently returns empty entity dict without logging what went wrong (line 206-207)
-- Files: `tools/srt_entities.py`
+- Files: `tools/srt_entities.py` (lines 214-215)
 - Impact: When LLM returns malformed JSON, script silently skips the entity. User has no visibility into failure count or reasons
 - Fix approach: Log parse failures with line number/cue index and track statistics
 
 **Unchecked subprocess return codes in download_entities.py:**
 - Issue: Line 168-173 runs `wikipedia_image_downloader.py` but only checks for `CalledProcessError`. If the subprocess exits with code 2 but doesn't raise, silent failures occur
-- Files: `tools/download_entities.py`
+- Files: `tools/download_entities.py` (lines 176-178)
 - Impact: Entity downloads can fail without propagating errors up to the pipeline orchestrator
 - Fix approach: Always check returncode explicitly or use `check=True` (already done, but consider adding stderr capture for better diagnostics)
+
+**Use of global mutable state in wikipedia_image_downloader.py:**
+- Issue: Global variables modified at module level (lines 37-43) and in `main()` (line 819)
+- Files: `wikipedia_image_downloader.py` (REQUEST_DELAY_S, MAX_RETRIES, RETRY_BACKOFF_S, SVG_TO_PNG, SVG_PNG_WIDTH)
+- Impact: Makes code harder to test; side effects across function calls; not thread-safe if downloader is ever called from multi-threaded context
+- Fix approach: Pass configuration as parameters or use configuration object instead of global variables
+
+**SVG conversion is optional and silently skipped:**
+- Issue: SVG to PNG conversion silently fails if cairosvg/Cairo not installed; one warning per run only (line 744)
+- Files: `wikipedia_image_downloader.py` (lines 740-746)
+- Impact: Users may not realize SVG images aren't converted; produces lower-quality output without clear feedback
+- Current mitigation: Single warning via `_SVG_IMPORT_FAILED_WARNED` flag
+- Recommendations: Make SVG conversion requirement configurable at startup rather than per-file; consider pure-Python SVG rasterizer alternative
 
 ## Known Bugs
 
 **SRT timecode parsing is fragile:**
 - Symptoms: Multiple regex patterns attempt to parse different SRT variants (standard, VTT-like, bracketed HH:MM:SS:FF) but fall-through behavior silently skips malformed cues
-- Files: `tools/srt_entities.py` (lines 66-127)
+- Files: `tools/srt_entities.py` (lines 69-130)
 - Trigger: Non-standard SRT files with mixed timecode formats
 - Workaround: Pre-validate SRT with standard converter; cues that don't match any pattern are silently dropped without warning
 
@@ -49,8 +82,8 @@
 - Workaround: Validate all image paths before generating XML; run download step again to fill gaps
 
 **No validation that OPENAI_API_KEY is set before attempting calls:**
-- Symptoms: `tools/srt_entities.py` retrieves env var but doesn't validate it exists before making API call (line 272)
-- Files: `tools/srt_entities.py` (line 272), `broll.py` (line 398 only checks if set)
+- Symptoms: `tools/srt_entities.py` retrieves env var but doesn't validate it exists before making API call (line 324)
+- Files: `tools/srt_entities.py` (line 324), `broll.py` (line 398 only checks if set)
 - Trigger: Running without OPENAI_API_KEY environment variable
 - Workaround: Script will fail at first LLM call with "Missing Authorization header" but error is not caught or reported early
 
@@ -83,8 +116,8 @@
 ## Performance Bottlenecks
 
 **Sequential LLM API calls in srt_entities.py:**
-- Problem: Each SRT cue makes a separate LLM request with 0.2s delay between calls (line 262, 299). For a 100-cue transcript, this takes 20+ seconds
-- Files: `tools/srt_entities.py` (lines 285-295)
+- Problem: Each SRT cue makes a separate LLM request with 0.2s delay between calls (line 337). For a 100-cue transcript, this takes 20+ seconds
+- Files: `tools/srt_entities.py` (lines 337-347)
 - Cause: Delay is hardcoded to respect LLM rate limits, but no batching of requests
 - Improvement path: Implement request batching where multiple cues are processed per LLM call (if LLM supports); or use async HTTP calls instead of blocking sleep
 
@@ -101,10 +134,16 @@
 - Improvement path: For very large maps (10k+ entities), implement streaming JSON parser or implement pagination
 
 **SVG to PNG conversion is CPU-bound and sequential:**
-- Problem: cairosvg conversion runs for each SVG image sequentially (line 1035-1037 in `wikipedia_image_downloader.py`), blocking on I/O
+- Problem: cairosvg conversion runs for each SVG image sequentially in download loop, blocking on CPU
 - Files: `wikipedia_image_downloader.py` (lines 1034-1037)
 - Cause: Conversion happens in main download loop instead of in parallel worker pool
 - Improvement path: Move SVG conversion to background thread pool after download completes
+
+**Timecode precision loss in frame rounding:**
+- Problem: Frame conversions use `int(round(seconds * fps))` (line 71 in `generate_broll_xml.py`), which can cause 1-2 frame shifts
+- Files: `generate_broll_xml.py` (lines 69-82)
+- Cause: Rounding instead of truncation or fraction-based arithmetic
+- Improvement path: Use fractions module for exact conversions; document precision guarantees
 
 ## Fragile Areas
 
@@ -115,13 +154,13 @@
 - Test coverage: No unit tests for track assignment; only integration test would be running with various SRT files
 
 **LLM entity extraction reliability:**
-- Files: `tools/srt_entities.py` (lines 130-207)
+- Files: `tools/srt_entities.py` (lines 133-215)
 - Why fragile: Depends entirely on LLM returning valid JSON with expected keys. If prompt changes, model behavior changes, or API service is degraded, extraction degrades silently
 - Safe modification: Add explicit validation of returned entity structure before using; log parse failures with cue index for debugging. Add fallback extraction using regex if LLM fails
 - Test coverage: No testing of LLM response handling; manual tests only
 
 **Timezone handling in datetime inference:**
-- Files: `wikipedia_image_downloader.py` (line 327, 870)
+- Files: `wikipedia_image_downloader.py` (line 870)
 - Why fragile: Uses `datetime.datetime.now().year` without timezone awareness. If running in different timezone or daylight saving transition, cutoff year calculation could be off by 1
 - Safe modification: Use `datetime.datetime.now(datetime.UTC).year` or specify timezone explicitly
 - Test coverage: No unit tests for year inference
@@ -202,13 +241,13 @@
 
 **Untested SRT parsing edge cases:**
 - What's not tested: Malformed timecodes, mixed formats, BOM handling, speaker line stripping
-- Files: `tools/srt_entities.py` (lines 66-127)
+- Files: `tools/srt_entities.py` (lines 69-130)
 - Risk: Non-standard SRT files silently lose cues without warning
 - Priority: High - SRT is critical input format
 
 **Untested LLM response handling:**
 - What's not tested: Malformed JSON, missing keys, unexpected field types, network errors, rate limiting
-- Files: `tools/srt_entities.py` (lines 130-207)
+- Files: `tools/srt_entities.py` (lines 133-215)
 - Risk: LLM failures cascade into downstream pipeline failures
 - Priority: High - LLM is external dependency
 

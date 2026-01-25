@@ -5,206 +5,330 @@
 ## Directory Layout
 
 ```
-/Users/cliffwilliams/code/b-roll-finder-app/
-├── broll.py                          # CLI orchestrator / unified entry point
-├── generate_broll_xml.py             # XML timeline generation (FCP 7 → Resolve)
-├── wikipedia_image_downloader.py     # Core Wikipedia image download utility
-├── broll_config.yaml                 # Configuration file (optional)
-├── requirements.txt                  # Python dependencies
-├── README.md                         # Documentation
+/Users/cliffwilliams/code/davinci-b-roll-automater/
+├── broll.py                          # CLI orchestrator / main entry point (537 lines)
+├── generate_broll_xml.py             # XML timeline generation for DaVinci Resolve (452 lines)
+├── wikipedia_image_downloader.py     # Wikipedia image scraper and downloader (1089 lines)
+├── broll_config.yaml                 # Configuration template (YAML)
+├── requirements.txt                  # Python package dependencies
+├── README.md                         # User documentation
+├── .env                              # Environment variables (API keys)
+├── .python-version                   # Python version hint (3.11+)
+├── .gitignore                        # Git exclusions
 ├── tools/
-│   ├── srt_entities.py               # LLM-based entity extraction from SRT
-│   └── download_entities.py          # Entity → image download orchestrator
+│   ├── srt_entities.py               # Entity extraction from SRT via LLM (441 lines)
+│   └── download_entities.py          # Orchestrate entity image downloads (383 lines)
 ├── resolve_integration/
-│   ├── place_broll.py                # Python wrapper for Resolve integration
-│   └── place_broll.lua               # Native Lua script for direct Resolve manipulation
+│   ├── place_broll.py                # Python wrapper/setup for Resolve integration (517 lines)
+│   └── place_broll.lua               # Lua script for direct Resolve timeline manipulation (482 lines)
 ├── .planning/
-│   └── codebase/                     # Planning and analysis documents
-├── [Output artifacts - created at runtime]
-│   ├── entities_map.json             # Intermediate state file (entities + images)
-│   ├── entities_map-*.json           # Versions/backups
-│   ├── broll_timeline.xml            # Generated FCP 7 XML
-│   ├── broll_timeline-*.xml          # Versions
-│   ├── ATTRIBUTION_USED.tsv          # License attribution table
-│   └── [entity-name]/                # Downloaded images (organized by entity)
-│       ├── public_domain/
-│       ├── cc_by/
-│       ├── cc_by_sa/
-│       ├── other_cc/
-│       ├── restricted_nonfree/
-│       ├── unknown/
-│       └── DOWNLOAD_SUMMARY.tsv
-└── .venv/                            # Virtual environment (not tracked)
+│   └── codebase/                     # Planning and analysis documents (generated)
+│       ├── ARCHITECTURE.md
+│       ├── STRUCTURE.md
+│       ├── CONVENTIONS.md
+│       ├── TESTING.md
+│       ├── STACK.md
+│       ├── INTEGRATIONS.md
+│       └── CONCERNS.md
+├── test_entities.json                # Test/example entities map (for local testing)
+├── transcript.srt                    # Example SRT transcript file
+└── [Runtime artifacts - created during pipeline execution]
+    ├── entities_map.json             # Intermediate checkpoint (entities + images metadata)
+    ├── broll_timeline.xml            # Generated FCP 7 XML timeline (importable to Resolve)
+    ├── ATTRIBUTION_USED.tsv          # Attribution table for non-PD images (if --allow-non-pd)
+    └── {entity_name}/                # Downloaded images directory per entity
+        ├── public_domain/            # CC0 and public domain images
+        ├── cc_by/                    # Creative Commons BY
+        ├── cc_by_sa/                 # Creative Commons BY-SA
+        ├── other_cc/                 # Other Creative Commons variants
+        ├── restricted_nonfree/       # Non-free, All Rights Reserved
+        ├── unknown/                  # Unknown license
+        └── DOWNLOAD_SUMMARY.tsv      # License metadata for downloaded images
 ```
 
 ## Directory Purposes
 
 **Root Directory:**
-- Purpose: Project root containing main CLI entry point and configuration
-- Contains: Orchestrator script, configuration files, top-level data files
+- Purpose: Project root containing main CLI orchestrator, configuration, and dependencies
+- Contains: Main entry point, config template, dependency manifest, documentation
 - Key files: `broll.py`, `broll_config.yaml`, `requirements.txt`
+- Output artifacts: `entities_map.json`, `broll_timeline.xml`, entity image folders created here
 
 **tools/ Directory:**
-- Purpose: Task-specific Python scripts for individual pipeline stages
-- Contains: Entity extraction logic, download coordination, Wikipedia integration
-- Key files: `srt_entities.py`, `download_entities.py`
+- Purpose: Individual pipeline stage implementations (subprocess entry points)
+- Contains: Entity extraction (LLM-based), download coordination, utility helpers
+- Key files: `srt_entities.py` (entity extraction), `download_entities.py` (image coordination)
 - Invocation: Called as subprocesses from `broll.py` or standalone via CLI
+- Pattern: Each tool is independently executable with full argument parsing
 
 **resolve_integration/ Directory:**
 - Purpose: DaVinci Resolve-specific integration code
-- Contains: Lua-based direct timeline manipulation, Python wrapper for setup
+- Contains: Lua-based direct timeline manipulation, Python wrapper/setup
 - Key files: `place_broll.lua` (primary), `place_broll.py` (optional wrapper)
-- Invocation: Lua script runs inside Resolve scripting console
+- Invocation: Lua script runs inside Resolve; Python wrapper optional for setup/testing
+- Alternative to: XML import workflow; directly manipulates active Resolve project
 
 **.planning/codebase/ Directory:**
-- Purpose: Architecture and planning documentation (generated by GSD tools)
-- Contains: Analysis documents (ARCHITECTURE.md, STRUCTURE.md, etc.)
-- Committed: Yes, updated as codebase evolves
+- Purpose: Architecture and implementation guidance documents (generated by GSD)
+- Contains: Analysis documents for architecture, structure, conventions, testing, concerns
+- Committed: Yes (documents guide implementation decisions)
+- Updated: Manually when codebase architecture changes significantly
 
 ## Key File Locations
 
 **Entry Points:**
 
-| File | Purpose | Invocation |
-|------|---------|-----------|
-| `broll.py` | Unified CLI dispatcher for all operations | `python broll.py [command] [options]` |
-| `tools/srt_entities.py` | Extract entities from SRT via LLM | `python tools/srt_entities.py --srt FILE --out FILE` |
-| `tools/download_entities.py` | Download images for entities | `python tools/download_entities.py --map FILE` |
-| `generate_broll_xml.py` | Generate FCP 7 XML timeline | `python generate_broll_xml.py entities_map.json --output FILE` |
-| `wikipedia_image_downloader.py` | Core Wikipedia image downloader | `python wikipedia_image_downloader.py "Search Term"` |
-| `resolve_integration/place_broll.lua` | Resolve script for direct timeline edit | Run inside Resolve scripting console |
+| File | Purpose | Type | Invocation |
+|------|---------|------|-----------|
+| `broll.py` | Unified CLI dispatcher for entire pipeline | Python | `python broll.py [command]` |
+| `tools/srt_entities.py` | Extract entities from SRT transcript via LLM | Python | `python tools/srt_entities.py --srt FILE --out FILE` |
+| `tools/download_entities.py` | Download images for extracted entities | Python | `python tools/download_entities.py --map FILE` |
+| `generate_broll_xml.py` | Generate FCP 7 XML timeline from entities map | Python | `python generate_broll_xml.py ENTITIES_MAP --output FILE` |
+| `wikipedia_image_downloader.py` | Core Wikipedia image scraper and downloader | Python | `python wikipedia_image_downloader.py "Search Term" [options]` |
+| `resolve_integration/place_broll.lua` | Direct Resolve timeline manipulation | Lua | Execute inside Resolve scripting console |
+| `resolve_integration/place_broll.py` | Optional Python wrapper for Resolve setup | Python | Run standalone or as Resolve integration helper |
 
-**Configuration:**
+**Configuration Files:**
 
-| File | Purpose | Format | Required |
-|------|---------|--------|----------|
-| `broll_config.yaml` | Pipeline configuration (images per entity, FPS, LLM model, etc.) | YAML | No (defaults used if missing) |
-| `requirements.txt` | Python package dependencies | pip format | Yes (for reproducibility) |
+| File | Purpose | Format | Required | Notes |
+|------|---------|--------|----------|-------|
+| `broll_config.yaml` | Pipeline configuration (FPS, LLM model, output paths) | YAML | No | Defaults used if missing; can override via CLI flags |
+| `requirements.txt` | Python package dependencies | pip | Yes | Install with `pip install -r requirements.txt` |
+| `.env` | Environment variables (API keys, host configs) | dotenv | No | Loaded via `python-dotenv` in srt_entities.py |
+| `.python-version` | Python version specification | plain text | No | Used by pyenv if installed |
 
-**Core Logic:**
+**Core Logic Files:**
 
-| File | Lines | Primary Responsibility |
-|------|-------|----------------------|
-| `broll.py` | 537 | Orchestration, config loading, subprocess dispatch, CLI argument parsing |
-| `tools/srt_entities.py` | 441 | SRT parsing, LLM API integration, entity extraction, temporal filtering |
-| `tools/download_entities.py` | 383 | Entity-to-Wikipedia mapping, parallel downloads, license classification |
-| `generate_broll_xml.py` | 452 | Placement calculation, FCP 7 XML generation, timecode conversion |
-| `wikipedia_image_downloader.py` | 1089 | Wikipedia API interaction, image discovery, HTTP handling, SVG conversion |
-| `resolve_integration/place_broll.lua` | 482 | Lua scripting API, Resolve media pool management, clip placement |
+| File | Size | Primary Responsibility |
+|------|------|----------------------|
+| `broll.py` | 537 lines | CLI orchestration, config loading, subprocess dispatch, pipeline coordination |
+| `tools/srt_entities.py` | 441 lines | SRT parsing (3 timecode formats), LLM integration (OpenAI/Ollama), entity extraction and deduplication |
+| `tools/download_entities.py` | 383 lines | Entity-to-Wikipedia mapping, parallel downloads (4 workers), license classification, metadata collection |
+| `generate_broll_xml.py` | 452 lines | Placement calculation (timecode to frame), FCP 7 XML generation, track assignment (round-robin V2-V5) |
+| `wikipedia_image_downloader.py` | 1089 lines | Wikipedia API queries, image MIME type filtering, SVG to PNG conversion, rate limiting with backoff |
+| `resolve_integration/place_broll.lua` | 482 lines | JSON parsing (embedded), Resolve scripting API, media pool bins, clip placement on timeline |
 
-**Testing:**
-- No dedicated test directory
-- No test files detected
+**Testing and Documentation:**
+
+| File | Purpose |
+|------|---------|
+| `test_entities.json` | Example entities map (for manual testing/development) |
+| `transcript.srt` | Example SRT transcript (for testing entity extraction) |
+| `README.md` | User-facing documentation with usage examples |
 
 ## Naming Conventions
 
 **Files:**
-- Lowercase with underscores: `srt_entities.py`, `download_entities.py`
-- Descriptive verb + noun pattern: `place_broll.lua`, `generate_broll_xml.py`
-- Exception: `broll.py` (short name for main entry point)
+- Lowercase with underscores: `srt_entities.py`, `download_entities.py`, `broll_config.yaml`
+- Descriptive verb + noun: `generate_broll_xml.py`, `place_broll.lua`, `wikipedia_image_downloader.py`
+- Short names for main entry: `broll.py` (not `broll_orchestrator.py`)
+- Config files: All lowercase with dots and underscores: `.env`, `.python-version`, `.wikipedia_image_downloader.ini`
 
 **Directories:**
-- Lowercase with underscores: `tools/`, `resolve_integration/`
-- Functional grouping by role: `tools/` (pipeline stages), `resolve_integration/` (Resolve-specific)
+- Lowercase with underscores: `tools/`, `resolve_integration/`, `.planning/`
+- Functional grouping: `tools/` (pipeline stages), `resolve_integration/` (Resolve-specific code)
+- Hidden directories: `.planning/`, `.git/`, `.claude/` (prefixed with dot)
+
+**Python Functions:**
+- Snake_case: `parse_srt()`, `call_llm_extract()`, `download_entity()`, `safe_folder_name()`, `resolve_script_path()`
+- Internal helpers prefixed with underscore: `_format_hhmmss_frames_to_srt()`, `_strip_speaker_lines()`, `_normalize_entity_name()`
+- Command handlers in broll.py: `cmd_extract()`, `cmd_download()`, `cmd_xml()`, `cmd_pipeline()`, `cmd_status()`
+- Step executors: `run_step()` (subprocess wrapper), `load_config()` (config management)
+
+**Python Classes/Dataclasses:**
+- PascalCase: `SrtCue` (defined in `tools/srt_entities.py` line 39-44)
 
 **Variables:**
-- Snake_case throughout (Python convention)
-- Descriptive names: `entities_map`, `track_placements`, `out_path`
-- Prefixes for clarity: `_strip_speaker_lines()` (internal helper, leading underscore)
+- Snake_case throughout: `entities_map`, `track_placements`, `out_path`, `output_dir`, `max_frame`, `placements_list`
+- Abbreviations in local scope only: `p` (placement), `m` (regex match), `cmd` (command list)
+- Boolean prefixes: `has_year`, `is_person`, `allow_non_pd`, `no_svg_to_png`
 
-**Classes/Dataclasses:**
-- PascalCase: `SrtCue` (line 36 in `tools/srt_entities.py`)
+**Configuration Keys (YAML/dict):**
+- Snake_case: `images_per_entity`, `image_duration_seconds`, `min_gap_seconds`, `broll_track_count`, `allow_non_pd`
+- Nested: `llm.provider`, `llm.model` (under `llm` dict)
+- CLI flag equivalents: `--images-per-entity` maps to `images_per_entity` in config
 
-**Functions:**
-- Snake_case: `call_llm_extract()`, `parse_srt()`, `safe_folder_name()`
-- Internal helpers prefixed with underscore: `_format_hhmmss_frames_to_srt()`, `_normalize_entity_name()`
+**JSON Structure Keys (entities_map.json):**
+- Snake_case: `occurrences`, `images`, `cue_index`, `source_url`, `license_short`, `license_url`, `canonical`
+- Reserved prefixes: None; flat structure per entity
+- Metadata keys in images array: `path`, `license`, `category`, `license_short`, `license_url`, `source_url`
 
-**Configuration Keys (YAML):**
-- Snake_case: `images_per_entity`, `image_duration_seconds`, `broll_track_count`
-
-**JSON Structure Keys:**
-- Snake_case in entities_map: `occurrences`, `images`, `source_url`, `license_short`
-- Underscore separated: `cue_index`, `duration_frames`, `masterclip_id`
+**Environment Variables:**
+- UPPERCASE with underscores: `OPENAI_API_KEY`, `OPENAI_API_BASE`, `OLLAMA_HOST`, `WIKI_IMG_OUTPUT_DIR`
+- Scope-specific: `OPENAI_*` (LLM provider), `OLLAMA_*` (Ollama provider), `WIKI_*` (Wikipedia downloader)
 
 ## Where to Add New Code
 
-**New Pipeline Stage (between existing stages):**
-- Create: `tools/new_stage.py` with standard CLI argument structure
-- Update: `broll.py` to add new command and integrate into pipeline flow
-- Pattern: Follow `srt_entities.py` structure (argparse, main function, return exit code)
-- Intermediate file: Create/read JSON file in same format as `entities_map.json` for data passing
+**New Pipeline Stage (e.g., audio extraction, metadata enrichment):**
+- Create: New file `tools/new_stage.py` with standard structure:
+  ```python
+  import argparse, json, sys
+
+  def main():
+      parser = argparse.ArgumentParser(description="...")
+      parser.add_argument("--input", required=True, help="...")
+      parser.add_argument("--output", required=True, help="...")
+      args = parser.parse_args()
+
+      # Process input
+      # Output result
+      return 0  # or 1 on error
+
+  if __name__ == "__main__":
+      sys.exit(main())
+  ```
+- Update: `broll.py` to add new command function:
+  ```python
+  def cmd_newstage(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+      script = resolve_script_path("new_stage.py")
+      cmd = [sys.executable, str(script), "--input", str(args.input), ...]
+      return 0 if run_step("Description", cmd).returncode == 0 else 1
+  ```
+- Register: Add argparse subcommand and add to pipeline flow if appropriate
+- Data format: Continue using `entities_map.json` for state passing (read as input, write as output)
 
 **New Feature within Existing Stage:**
-- Extract: Modify `tools/srt_entities.py` directly (e.g., add new entity type to LLM prompt)
-- Download: Modify `tools/download_entities.py` (e.g., add new image source)
-- XML: Modify `generate_broll_xml.py` (e.g., add new XML element types)
-- Resolve: Modify `resolve_integration/place_broll.lua` (e.g., add effects or color corrections)
+- Entity extraction: Modify `tools/srt_entities.py` to add new entity type or filtering logic
+  - Example: Add new entity type to LLM system prompt (line 146-161)
+  - Example: Modify entity deduplication logic (around line 225+)
+- Image download: Modify `tools/download_entities.py` or `wikipedia_image_downloader.py`
+  - Example: Add new image source besides Wikipedia (branch in `download_entity()`)
+  - Example: Add new license classification (in license categorization logic)
+- XML generation: Modify `generate_broll_xml.py`
+  - Example: Add new XML elements (modify `build_xml_timeline()`)
+  - Example: Change track assignment strategy (modify placement calculation logic around line 88+)
+- Resolve integration: Modify `resolve_integration/place_broll.lua`
+  - Example: Add effects or color corrections after clip placement
+  - Example: Modify media pool bin structure
 
-**New Utility/Helper:**
-- Shared utilities: Add to `tools/` as separate module, import where needed
-- Do not add large utilities to `broll.py` (keep it lightweight for orchestration)
+**New Utility/Helper Function:**
+- Small helpers: Add to existing file in same directory where used
+- Shared utilities: Create new `tools/utilities.py` and import in files that need it
+- Do NOT add large utilities to `broll.py` (keep it lightweight for orchestration only)
+- Pattern: Prefix with underscore if internal-only: `def _helper_function(): ...`
 
-**New LLM Provider Support:**
-- Add: New conditional branch in `tools/srt_entities.py` lines 159-190 (call_llm_extract function)
-- Pattern: Same request/response structure as existing providers
-- Environment variable: Add to documentation if secrets required
-
-**New Wikipedia-related Functionality:**
-- Build on: `wikipedia_image_downloader.py` (already modular with search, image list, download functions)
-- Import: From `tools/download_entities.py` or create new tool that imports it
+**New LLM Provider Support (e.g., Anthropic, local Llama):**
+- Modify: `tools/srt_entities.py` function `call_llm_extract()` (lines 133-209)
+- Pattern: Add new `elif provider == "newprovider":` branch with same request/response structure
+- Required: Implement expected JSON response with keys: `people`, `places`, `concepts`, `events`, `primary`
+- Environment: Add env var documentation if new secrets required
+- Config: Add to `broll_config.yaml` example with default model name
 
 **New Configuration Options:**
-- Add to: `broll.py` DEFAULT_CONFIG (lines 41-52)
-- Update: Command-line parsers in corresponding functions (e.g., cmd_xml)
-- Override: Via YAML file or CLI flags following existing pattern
+- Add to: `DEFAULT_CONFIG` dict in `broll.py` (lines 41-52)
+- Add to: Corresponding command function arg parser (e.g., `cmd_xml()` parser in line 440+)
+- Document: Add to `broll_config.yaml` template with example values
+- Example: New option `--min-confidence 0.8` would add:
+  1. `DEFAULT_CONFIG["min_confidence"] = 0.8`
+  2. `parser.add_argument("--min-confidence", type=float, ...)`
+  3. Load in command: `value = args.min_confidence or config.get("min_confidence", 0.8)`
 
-## Special Directories
+**New Wikipedia-related Functionality:**
+- Leverage: `wikipedia_image_downloader.py` is already modular with search, list, download functions
+- Import: From `tools/download_entities.py` or create new tool that imports it
+- Example: To add metadata enrichment, import functions from downloader and chain calls
 
-**Output Directories (Created at Runtime):**
+**New Documentation:**
+- Planning docs: Add/update `.planning/codebase/*.md` files for architectural changes
+- User docs: Update `README.md` with usage examples and setup instructions
+- Inline docs: Add docstrings to new functions in Google style:
+  ```python
+  def function_name(arg1: str, arg2: int) -> bool:
+      """One-line description.
 
-| Directory | Purpose | Generated | Committed |
-|-----------|---------|-----------|-----------|
-| `./{entity_name}/` | Downloaded images organized by license | Yes | No (git ignored) |
-| `.venv/` | Python virtual environment | Yes | No (git ignored) |
-| `.planning/codebase/` | Architecture/analysis docs | Partially (hand-edited) | Yes |
+      Longer description if needed.
+
+      Args:
+          arg1: Description of arg1
+          arg2: Description of arg2
+
+      Returns:
+          Description of return value
+      """
+  ```
+
+## Special Directories and Files
+
+**Runtime Output Directories (Created during pipeline execution):**
+
+| Directory | Creator | Purpose | Committed | Cleanup |
+|-----------|---------|---------|-----------|---------|
+| `{entity_name}/` | `wikipedia_image_downloader.py` | Downloaded images organized by license | No (git ignored) | Manual or rerun download stage |
+| `.venv/` | User via `python3 -m venv` | Python virtual environment | No (git ignored) | Can be deleted and recreated |
+| `{output_dir}/` | User via `--output-dir` flag | Alternative output directory (if specified) | No | User's choice |
 
 **.venv/ Directory:**
 - Created by: `python3 -m venv .venv`
-- Purpose: Isolated Python environment with dependencies
-- Git status: Not tracked (in .gitignore)
+- Purpose: Isolated Python environment with project dependencies
+- Setup: `source .venv/bin/activate` (macOS/Linux) or `.venv\Scripts\activate` (Windows)
+- Dependencies: Installed via `pip install -r requirements.txt`
+- Git status: Not tracked (listed in `.gitignore`)
+
+**.env File:**
+- Purpose: Store environment variables (API keys, host configs)
+- Format: `KEY=value` per line (dotenv format)
+- Loaded by: `from dotenv import load_dotenv` in `tools/srt_entities.py` line 31
+- Not tracked: Probably in `.gitignore` (for security)
+- Example contents:
+  ```
+  OPENAI_API_KEY=sk-...
+  OPENAI_API_BASE=https://api.openai.com/v1
+  OLLAMA_HOST=http://127.0.0.1:11434
+  WIKI_IMG_OUTPUT_DIR=/path/to/images
+  ```
+
+**.planning/codebase/ Directory:**
+- Purpose: Architecture and guidance documents (generated by GSD mapping tool)
+- Contains: ARCHITECTURE.md, STRUCTURE.md, CONVENTIONS.md, TESTING.md, STACK.md, INTEGRATIONS.md, CONCERNS.md
+- Generated: Yes (by GSD tools)
+- Committed: Yes (updated when architecture changes)
+- Usage: Reference for implementing new features, understanding existing patterns
 
 ## Configuration Resolution Order
 
-**For `broll_config.yaml` location:**
-1. Explicit `--config-file` CLI argument (if supported)
+**For broll_config.yaml location:**
+1. Explicit config file path (if passed to script)
 2. Current working directory: `./broll_config.yaml`
-3. Script directory: `<script-dir>/broll_config.yaml`
-4. Return None and use hardcoded defaults
+3. Script directory: `<script-parent-dir>/broll_config.yaml`
+4. Not found → use hardcoded `DEFAULT_CONFIG` dict
 
 **For output directory (image downloads):**
-1. Explicit `--output` CLI flag
+1. Explicit `--output` or `--output-dir` CLI flag
 2. Environment variable: `WIKI_IMG_OUTPUT_DIR`
-3. Config file: `output_dir` in config.ini
-4. Default: Current directory `.`
+3. Config file key: `output_dir` in `broll_config.yaml`
+4. Config file key: `settings.output_dir` in `.wikipedia_image_downloader.ini`
+5. Default: Current working directory `.`
 
-**For LLM provider/model:**
-1. CLI flags: `--provider`, `--model`
-2. Config file: `llm.provider`, `llm.model`
-3. Hardcoded defaults: `provider=openai`, `model=gpt-4o-mini`
+**For LLM provider and model:**
+1. CLI flags: `--provider openai`, `--model gpt-4o-mini`
+2. Environment variables: `OPENAI_API_KEY`, `OLLAMA_HOST` (determine available providers)
+3. Config file: `llm.provider`, `llm.model` in `broll_config.yaml`
+4. Hardcoded: `provider=openai`, `model=gpt-4o-mini` in `DEFAULT_CONFIG`
 
-## Project State Files
+**For FPS, clip duration, track count, etc.:**
+1. CLI flags: `--fps 24`, `--duration 4.0`, `--tracks 4`
+2. Config file: `fps`, `image_duration_seconds`, `broll_track_count`, etc. in `broll_config.yaml`
+3. Hardcoded: Values in `DEFAULT_CONFIG` dict
 
-**Transient (should not be committed):**
-- `entities_map*.json` - Intermediate pipeline state
-- `broll_timeline*.xml` - Generated outputs
+## State and Checkpoint Files
+
+**Transient (should NOT be committed):**
+- `entities_map.json` - Intermediate pipeline state (can be regenerated from SRT)
+- `entities_map-*.json` - Backups/versions of entities map
+- `broll_timeline.xml` - Generated FCP 7 XML (can be regenerated from entities map)
+- `broll_timeline-*.xml` - Versions/backups
 - `ATTRIBUTION_USED.tsv` - Generated attribution table
-- Downloaded image directories (`{entity}/public_domain/`, etc.)
+- `{entity_name}/` directories - Downloaded images (large, regeneratable)
+- `.venv/` - Virtual environment
 
-**Persistent (committed):**
+**Persistent (should be committed):**
 - `.planning/codebase/*.md` - Architecture documentation
 - `README.md` - User documentation
-- `broll_config.yaml` - Example configuration (check in as template)
-- `requirements.txt` - Dependency list
+- `broll_config.yaml` - Example configuration template
+- `requirements.txt` - Dependency specification
+- `broll.py`, `tools/*.py`, `generate_broll_xml.py`, `wikipedia_image_downloader.py` - Source code
+- `resolve_integration/*.py`, `resolve_integration/*.lua` - Integration code
+- `.gitignore` - Git configuration
 
 ---
 

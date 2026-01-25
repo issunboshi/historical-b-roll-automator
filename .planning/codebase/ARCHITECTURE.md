@@ -4,193 +4,306 @@
 
 ## Pattern Overview
 
-**Overall:** Pipeline-based multi-stage data transformation with external service integrations (LLM, Wikipedia API, DaVinci Resolve).
+**Overall:** Three-stage sequential pipeline with subprocess-based orchestration and immutable JSON state passing.
 
 **Key Characteristics:**
-- Sequential processing pipeline: SRT transcript → entity extraction → image download → XML timeline generation
-- Modular script design with independent CLI entry points
-- Unified orchestration via `broll.py` CLI dispatcher
-- Subprocess-based interprocess communication between stages
-- File-based data interchange using JSON maps as canonical state
-- External dependency on LLM providers (OpenAI/Ollama) and Wikipedia API
+- **Stage-based processing**: Entity extraction → image download → timeline generation, each stage reads/writes `entities_map.json`
+- **Subprocess isolation**: `broll.py` spawns child processes for each stage to allow independent scaling and error isolation
+- **Configuration cascading**: CLI flags > environment variables > YAML config file > hardcoded defaults
+- **File-based data interchange**: Central `entities_map.json` accumulates metadata as it flows through pipeline
 
 ## Layers
 
 **CLI/Orchestration Layer:**
-- Purpose: Command dispatch, configuration management, pipeline workflow coordination
-- Location: `broll.py`
-- Contains: Argument parsing, config loading, subprocess spawning, step coordination
-- Depends on: Tool scripts (via subprocess), config files (YAML)
-- Used by: End users via command line
+- Purpose: Parse arguments, manage configuration, dispatch to tool scripts via subprocess
+- Location: `broll.py` (main entry point)
+- Contains: Argument parsing, config loading (`load_config()`, `find_config_file()`), subprocess spawning (`run_step()`), pipeline coordination (`cmd_pipeline()`)
+- Depends on: Tool scripts (via `subprocess.run()`), YAML config, Python `argparse`
+- Used by: End users via command line; does NOT directly execute stage logic
 
 **Entity Extraction Layer:**
-- Purpose: Parse SRT transcripts and use LLM to identify people, places, concepts, events in each cue
+- Purpose: Parse SRT transcript and use LLM (OpenAI/Ollama) to extract named entities per cue
 - Location: `tools/srt_entities.py`
-- Contains: SRT parsing, LLM API communication (OpenAI/Ollama), entity deduplication, temporal filtering
-- Depends on: HTTP requests library, OPENAI_API_KEY or OLLAMA_HOST environment variables
-- Used by: `broll.py pipeline`, `broll.py extract` commands
+- Contains: SRT parsing (`parse_srt()`), LLM API calls (`call_llm_extract()`), entity deduplication, canonical name resolution
+- Depends on: `requests` library, LLM API (OpenAI or Ollama), environment variables (OPENAI_API_KEY, OPENAI_API_BASE, OLLAMA_HOST)
+- Used by: Spawned by `cmd_extract()` in broll.py; reads SRT, outputs `entities_map.json`
 
 **Image Download Layer:**
-- Purpose: Resolve extracted entities to Wikipedia pages and download images with license metadata
-- Location: `tools/download_entities.py`, `wikipedia_image_downloader.py`
-- Contains: Entity-to-Wikipedia mapping, parallel download execution, license classification, SVG-to-PNG conversion
-- Depends on: `wikipedia_image_downloader.py`, file I/O, image processing (Pillow, Cairo for SVG)
-- Used by: `broll.py pipeline`, `broll.py download` commands
+- Purpose: Map extracted entities to Wikipedia pages and download representative images with license metadata
+- Location: `tools/download_entities.py` (orchestrator), `wikipedia_image_downloader.py` (core downloader)
+- Contains: Entity-to-image mapping, parallel download execution (ThreadPoolExecutor), license classification, image metadata collection
+- Depends on: `wikipedia_image_downloader.py`, `requests`, `BeautifulSoup4`, parallel execution (threading)
+- Used by: Spawned by `cmd_download()` in broll.py; reads and modifies `entities_map.json` with image paths and license info
 
 **Timeline Generation Layer:**
-- Purpose: Convert entities map to FCP 7 XML timeline for DaVinci Resolve import
+- Purpose: Convert enriched `entities_map.json` to FCP 7 XML timeline for DaVinci Resolve import
 - Location: `generate_broll_xml.py`
-- Contains: Placement logic, XML generation, frame/timecode calculations, file reference resolution
-- Depends on: XML ElementTree library, entities_map.json input
-- Used by: `broll.py pipeline`, `broll.py xml` commands
+- Contains: Clip placement logic, timecode conversion (`seconds_to_frames()`, `frames_to_timecode()`), XML structure building (`build_xml_timeline()`), track assignment
+- Depends on: `xml.etree.ElementTree`, JSON input, path manipulation
+- Used by: Spawned by `cmd_xml()` in broll.py; reads `entities_map.json`, outputs `broll_timeline.xml`
 
 **Resolve Integration Layer:**
-- Purpose: Direct Lua-based manipulation of DaVinci Resolve project (alternative to XML import)
-- Location: `resolve_integration/place_broll.py` (Python wrapper), `resolve_integration/place_broll.lua` (Lua script)
-- Contains: JSON parsing, Resolve scripting API interaction, media pool management
-- Depends on: Resolve scripting environment (must run inside Resolve)
-- Used by: Manual invocation inside Resolve scripting console
+- Purpose: Direct manipulation of DaVinci Resolve project via scripting (alternative to XML import)
+- Location: `resolve_integration/place_broll.lua` (primary), `resolve_integration/place_broll.py` (optional Python wrapper)
+- Contains: JSON decoder (embedded in Lua), Resolve API bindings, media pool bin creation, clip placement on timeline
+- Depends on: Resolve Python API (`DaVinciResolveScript` module), Lua 5.1 environment
+- Used by: User invokes from within Resolve scripting console; reads `entities_map.json`, directly modifies active project
 
 ## Data Flow
 
-**Full Pipeline Flow:**
+**Full Pipeline:**
 
-1. **Input:** SRT transcript file (HH:MM:SS,mmm timecode + dialogue per cue)
-2. **Stage 1 - Extract:** `srt_entities.py` parses SRT, calls LLM per cue, produces `entities_map.json`
-   - Each cue text → LLM → {people, places, concepts, events, primary_entity}
-   - Entities deduplicated across 5-second time windows
-   - JSON structure: `{entity_name: {occurrences: [...], images: [...], license: ...}, ...}`
-3. **Stage 2 - Download:** `download_entities.py` reads map, calls Wikipedia downloader per entity
-   - Each entity → Wikipedia search → top images → download to disk
-   - License classification (PD, CC-BY, CC-BY-SA, other CC, restricted, unknown)
-   - Metadata appended to entities_map.json
-4. **Stage 3 - XML Generation:** `generate_broll_xml.py` reads updated map, creates FCP 7 XML
-   - Placements calculated based on occurrence timecodes + image duration + min gap
-   - Images interleaved across configurable track count
-   - XML importable into DaVinci Resolve
-5. **Output:** `broll_timeline.xml` (importable) or in-Resolve placement via Lua
+```
+Input: SRT transcript (timecodes + dialogue)
+           ↓
+[Stage 1: Extract Entities]
+  - tools/srt_entities.py spawned by broll.py
+  - Parse SRT with 3 timecode format support
+  - Call LLM (OpenAI/Ollama) per cue
+  - Extract: people, places, concepts, events
+  - Deduplicate across 5-second windows
+  - Output: entities_map.json
+           ↓
+entities_map.json:
+{
+  "Barack Obama": {
+    "type": "person",
+    "canonical": "Barack Obama",
+    "occurrences": [
+      {
+        "cue_index": 5,
+        "start": "00:00:15,200",
+        "end": "00:00:22,500",
+        "text": "Barack Obama became president..."
+      }
+    ],
+    "images": []  ← populated by next stage
+  },
+  ...
+}
+           ↓
+[Stage 2: Download Images]
+  - tools/download_entities.py spawned by broll.py
+  - For each entity in map:
+    - Call wikipedia_image_downloader.py in subprocess
+    - Download N images (default 3)
+    - Classify by license: public_domain, cc_by, cc_by_sa, other_cc, restricted_nonfree, unknown
+  - Parallel execution: 4 workers by default
+  - Update entities_map.json with image paths and metadata
+           ↓
+entities_map.json (enriched):
+{
+  "Barack Obama": {
+    ...,
+    "images": [
+      {
+        "path": "/Users/.../Barack Obama/public_domain/image1.jpg",
+        "license": "public_domain",
+        "category": "public_domain",
+        "license_short": "CC0",
+        "license_url": "...",
+        "source_url": "https://commons.wikimedia.org/wiki/..."
+      },
+      { ... },
+      { ... }
+    ]
+  },
+  ...
+}
+           ↓
+[Stage 3: Generate Timeline XML]
+  - generate_broll_xml.py spawned by broll.py
+  - Read entities_map.json
+  - Calculate placements:
+    - For each occurrence of each entity
+    - Get first available image
+    - Assign to track (round-robin: V2, V3, V4, V5)
+    - Calculate frame position from timecode
+    - Ensure min_gap_seconds between clips
+  - Build FCP 7 XML structure
+    - Master clips in B-Roll bin
+    - Video sequence with interleaved clips on tracks
+    - File references with proper file:// URLs
+  - Output: broll_timeline.xml
+           ↓
+Output: broll_timeline.xml (ready for Resolve import)
+       + Downloaded images directory structure
+       + Optional ATTRIBUTION_USED.tsv (for non-PD images)
+```
 
 **State Management:**
 
-The canonical state is `entities_map.json`. Each stage reads, optionally modifies, and writes back:
-
-```json
-{
-  "entity_name": {
-    "occurrences": [
-      {"cue_index": 1, "timecode": "00:05:12,100", "frame": 7800},
-      {"cue_index": 2, "timecode": "00:10:05,500", "frame": 15050}
-    ],
-    "images": [
-      {
-        "path": "/path/to/images/entity_name/public_domain/image1.jpg",
-        "license": "public_domain",
-        "source_url": "https://commons.wikimedia.org/..."
-      }
-    ]
-  }
-}
-```
+- **Persistent checkpoint**: `entities_map.json` is the canonical state; allows resume from any stage
+- **Ephemeral**: SRT file, config files (read-only inputs)
+- **Transient outputs**: XML file, downloaded images, attribution files (can be regenerated)
 
 ## Key Abstractions
 
-**SrtCue Dataclass:**
-- Purpose: Represent a single SRT subtitle block with timing and text
-- Examples: `tools/srt_entities.py` lines 36-41
-- Pattern: Immutable data transfer object with index, start, end, text fields
+**SrtCue:**
+- Purpose: Single subtitle entry with timing and dialogue
+- Examples: Defined in `tools/srt_entities.py` as dataclass: `SrtCue(index, start, end, text)`
+- Pattern: Data transfer object; parser produces list of these from SRT file
+- Parsing handles: Standard SRT (index on line 1), VTT format (dots instead of commas), frame-based timecodes
 
-**Entities Map:**
-- Purpose: Central data structure tracking entity → occurrences + images across full pipeline
-- Examples: JSON file format described in `generate_broll_xml.py` documentation
-- Pattern: Hierarchical dictionary updated by each stage, persisted to disk between stages
+**Entity:**
+- Purpose: Named entity with metadata (type, occurrences, images, canonical form)
+- Examples: Keys in `entities_map.json` dict; structure shown in data flow above
+- Pattern: Mutable JSON dict that accumulates metadata through pipeline stages
+- Fields: `type` (person/place/concept/event), `canonical` (Wikipedia-style name), `occurrences` (list), `images` (list)
 
-**Placement Record:**
-- Purpose: Calculated clip placement for XML generation (timecode, duration, track assignment)
-- Examples: `generate_broll_xml.py` lines 85-130 (placement calculation logic)
-- Pattern: Dictionary with keys: frame, duration_frames, track, path, name
+**Occurrence:**
+- Purpose: Specific mention of entity in transcript (timecode + context)
+- Examples: `occurrences` array in each entity
+- Pattern: Dict with keys: `cue_index`, `start`, `end`, `text` (the cue text containing entity)
+- Used for: Calculating placement timecodes in XML generation
 
-**LLM Provider Interface:**
-- Purpose: Abstract over OpenAI vs Ollama API differences
-- Examples: `tools/srt_entities.py` lines 159-190 (provider dispatch)
-- Pattern: Conditional branching on provider string, same request/response structure expected
+**Image Record:**
+- Purpose: Downloaded image with license and source metadata
+- Examples: `images` array in each entity
+- Pattern: Dict with keys: `path` (filesystem), `license` (short code), `category` (folder name), `license_url`, `source_url`
+- Used for: XML generation selects first available image per occurrence; filtering by license (PD vs. non-PD)
+
+**Placement:**
+- Purpose: Computed clip instance positioned on video track
+- Examples: Intermediate structure in `generate_broll_xml.py` (not persisted)
+- Pattern: Dict with keys: `entity_name`, `path`, `track`, `frame`, `duration_frames`
+- Calculation: For each occurrence → next available track (round-robin) → frame from timecode → duration from config
+
+**License Category:**
+- Purpose: Organize downloaded images by reuse rights
+- Examples: Folder names in entity directories: `public_domain`, `cc_by`, `cc_by_sa`, `other_cc`, `restricted_nonfree`, `unknown`
+- Pattern: Determined during download; affects `--allow-non-pd` filtering in XML generation and attribution requirements
 
 ## Entry Points
 
-**CLI Entry Point (broll.py):**
-- Location: `broll.py` lines 400-540 (main function)
-- Triggers: Direct invocation `python broll.py [command]`
-- Responsibilities: Parse arguments, load config, dispatch to subcommand functions
+**Command: `python broll.py pipeline --srt <file> [options]`**
+- Location: `broll.py` function `cmd_pipeline()`
+- Triggers: User execution with required SRT file
+- Responsibilities: Orchestrate extract → download → xml stages sequentially; stop pipeline on first failure; report summary on success
 
-**Extract Command:**
-- Location: `broll.py` lines 131-172 (cmd_extract function)
-- Triggers: `broll.py extract --srt FILE`
-- Responsibilities: Resolve script path, build subprocess command, call `srt_entities.py`
+**Command: `python broll.py extract --srt <file> --out <path> [options]`**
+- Location: `broll.py` function `cmd_extract()`
+- Triggers: User execution; also called by pipeline
+- Responsibilities: Spawn `tools/srt_entities.py` subprocess; validate SRT exists; output entities_map.json
 
-**Download Command:**
-- Location: `broll.py` lines 175-206 (cmd_download function)
-- Triggers: `broll.py download --map FILE`
-- Responsibilities: Build subprocess command, call `download_entities.py`
+**Command: `python broll.py download --map <file> [options]`**
+- Location: `broll.py` function `cmd_download()`
+- Triggers: User execution; also called by pipeline
+- Responsibilities: Spawn `tools/download_entities.py` subprocess; read/write entities_map.json; manage parallel downloads
 
-**XML Command:**
-- Location: `broll.py` lines 209-255 (cmd_xml function)
-- Triggers: `broll.py xml --map FILE`
-- Responsibilities: Build subprocess command, call `generate_broll_xml.py`
+**Command: `python broll.py xml --map <file> [options]`**
+- Location: `broll.py` function `cmd_xml()`
+- Triggers: User execution; also called by pipeline
+- Responsibilities: Spawn `generate_broll_xml.py` subprocess; validate entities_map exists; generate FCP 7 XML
 
-**Pipeline Command:**
-- Location: `broll.py` lines 258-353 (cmd_pipeline function)
-- Triggers: `broll.py pipeline --srt FILE`
-- Responsibilities: Orchestrate all three stages in sequence, stop on failure
+**Script: `python tools/srt_entities.py --srt <path> --out <path> [options]`**
+- Location: `tools/srt_entities.py` function `main()`
+- Triggers: Spawned by `cmd_extract()`; can be run standalone
+- Responsibilities: Parse SRT file → call LLM per cue → deduplicate entities → write entities_map.json
+- Exit codes: 0 (success), 1 (error), 2 (no cues parsed)
 
-**Direct Script Entry Points:**
-- `tools/srt_entities.py` main() line 256+
-- `tools/download_entities.py` main() line 340+
-- `generate_broll_xml.py` main() line 280+
-- `wikipedia_image_downloader.py` main() line 900+
+**Script: `python tools/download_entities.py --map <file> [options]`**
+- Location: `tools/download_entities.py` function `main()`
+- Triggers: Spawned by `cmd_download()`; can be run standalone
+- Responsibilities: Read entities_map.json → spawn parallel Wikipedia downloads → update map with image paths/metadata
+- Parallel: 4 workers by default (configurable with `--parallel` flag)
+
+**Script: `python generate_broll_xml.py <entities_map> [options]`**
+- Location: `generate_broll_xml.py` function `main()`
+- Triggers: Spawned by `cmd_xml()`; can be run standalone
+- Responsibilities: Read entities_map.json → compute placements → build FCP 7 XML → write file
+- Exit codes: 0 (success), 1 (file not found or invalid)
+
+**Resolve Integration: Inside Resolve scripting console**
+- Location: `resolve_integration/place_broll.lua` or wrapped by `place_broll.py`
+- Triggers: User selects from Resolve Scripts menu or calls from Python API
+- Responsibilities: Load entities_map.json → create media pool bins → place clips on timeline using Resolve API
+- Alternative: Bypasses XML import; directly manipulates active Resolve project
 
 ## Error Handling
 
-**Strategy:** Sequential fail-fast with clear error reporting
+**Strategy:** Fail-fast at each stage with clear error reporting to stderr; pipeline stops on first subprocess failure.
 
 **Patterns:**
-- CLI layer catches `subprocess.CalledProcessError` from failed subprocess steps, reports stage name
-- Extract layer: LLM API failures return empty entity sets, script continues (resilient to API issues)
-- Download layer: Individual entity download failures logged but don't block others (ThreadPoolExecutor)
-- XML generation: Non-existent image paths included in XML (Resolve handles relinking)
-- Environment validation: Scripts check required env vars (OPENAI_API_KEY) before processing
 
-Examples:
-- `broll.py` line 170: `except subprocess.CalledProcessError as e: print(f"Entity extraction failed: {e}", file=sys.stderr)`
-- `tools/srt_entities.py` line 269-270: Return exit code 2 if no cues parsed
-- `tools/download_entities.py`: Thread-safe exception handling for parallel downloads
+- **File validation**: Before subprocess spawn, check file exists; print error and return exit code 1
+  - Example: `broll.py` lines 180-182, 214-216 check SRT and entities_map exist
+
+- **Subprocess failure**: Catch `subprocess.CalledProcessError`, report stage name, stop pipeline
+  - Example: `cmd_pipeline()` checks return code after each step (line 303, 317, 334)
+
+- **JSON parsing errors**: Try-except in stage scripts; re-raise on invalid JSON from LLM or file read
+  - Example: `tools/srt_entities.py` wraps LLM response in json.loads() with try-except
+
+- **LLM API errors**: API calls include timeout (60s); HTTP errors printed with response text; treated as hard failure
+  - Example: `tools/srt_entities.py` `resp.raise_for_status()` on line 177
+
+- **Image download failures**: Individual entity download failures logged but don't block others (ThreadPoolExecutor in download_entities.py)
+  - Example: `download_entity()` catches `subprocess.CalledProcessError`, returns failure tuple; main loop continues
+
+- **Missing images in XML**: XML generated even if some images missing; Resolve handles missing media on import (user re-links)
+  - Example: `generate_broll_xml.py` does not validate image paths exist
+
+- **Configuration errors**: Missing optional config files treated as non-error; defaults applied
+  - Example: `load_config()` prints warning to stderr if YAML parse fails
 
 ## Cross-Cutting Concerns
 
 **Logging:**
-- Print-based to stdout/stderr (no structured logging library)
-- Verbose step headers in orchestrator (`broll.py` line 112-114: "STEP: {description}")
-- Progress updates during extraction (`tools/srt_entities.py` line 286: "[idx/total] Extracting...")
+- No structured logging; uses print to stdout/stderr
+- **CLI orchestrator** (`broll.py`): Step headers with "="*60 separator, progress on each command
+- **Stage scripts**: Progress updates with indices "[idx/total]" for long operations
+- Subprocess output: Captured or passed through depending on `capture_output` flag
 
 **Validation:**
-- Path existence checks before subprocess execution (`broll.py` lines 180-182, 214-216)
-- JSON structure validation in entity extraction (`tools/srt_entities.py` lines 196-207)
-- Timecode format validation in SRT parsing (`tools/srt_entities.py` line 76+)
-- Image path validation in XML generation (`generate_broll_xml.py` line 217)
+
+- **SRT parsing**: Three timecode format support: standard HH:MM:SS,mmm → HH:MM:SS:FF frames → VTT with dots
+  - Implemented in `parse_srt()` with cascading regex patterns (lines 69-130 in srt_entities.py)
+
+- **Entity structure**: LLM response must be valid JSON with required keys
+  - Enforced in `call_llm_extract()` with json.loads() and key checks (lines 196-207 in srt_entities.py)
+
+- **Image paths**: Windows and macOS paths converted to file:// URLs with proper escaping
+  - Implemented in `path_to_file_url()` in generate_broll_xml.py (lines 41-57)
+
+- **Timecodes**: Validated during SRT parsing; frame counts computed from FPS
+  - Implemented in `seconds_to_frames()` and `frames_to_timecode()` (lines 69-84 in generate_broll_xml.py)
 
 **Authentication:**
-- OpenAI: `OPENAI_API_KEY` environment variable required for provider="openai"
-- Ollama: `OLLAMA_HOST` environment variable optional (defaults to http://127.0.0.1:11434)
-- Wikipedia: Public API, no auth required but User-Agent expected
+
+- **OpenAI**: OPENAI_API_KEY required from environment; optional OPENAI_API_BASE (defaults to https://api.openai.com/v1)
+  - Checked in `srt_entities.py` lines 165-177 before API call
+
+- **Ollama**: OLLAMA_HOST optional from environment (defaults to http://127.0.0.1:11434)
+  - Checked in `srt_entities.py` lines 179-191 before API call
+
+- **Wikipedia**: Public API; no authentication required; User-Agent header expected as courtesy
+  - Configured in `wikipedia_image_downloader.py` with custom user-agent
 
 **Configuration:**
-- YAML config file: `broll_config.yaml` (optional, any directory)
-- Environment variables override config file values
-- CLI flags override both
-- Default config merged with provided values (`broll.py` lines 67-88)
 
-**Timing/Rate Limiting:**
-- `tools/srt_entities.py`: `--delay` parameter between LLM calls (default 0.2s)
-- `wikipedia_image_downloader.py`: `--delay` between API requests (default 0.1s), retry backoff with exponential falloff
-- `tools/download_entities.py`: Parallel thread pool with configurable worker count (default 4)
+- **Resolution order** (highest to lowest priority):
+  1. CLI flags: `--fps`, `--duration`, `--images-per-entity`, etc.
+  2. Environment variables: `OPENAI_API_KEY`, `OLLAMA_HOST`, `WIKI_IMG_OUTPUT_DIR`
+  3. Config file: `broll_config.yaml` (searched in cwd then script directory)
+  4. Hardcoded defaults: `DEFAULT_CONFIG` dict in broll.py (lines 41-52)
+
+- **Config file format**: YAML with keys matching DEFAULT_CONFIG structure
+  - Merge logic: `load_config()` recursively updates dict with file values (lines 67-88)
+
+**Rate Limiting and Politeness:**
+
+- **LLM calls**: `--delay` flag (default 0.2s) in srt_entities.py between requests
+- **Wikipedia API**: `--delay` flag (default 0.3s) in wikipedia_image_downloader.py between requests
+- **HTTP retry**: Exponential backoff on 429/5xx errors (max 5 retries by default)
+- **Parallel downloads**: Configurable worker count (default 4) to limit concurrent load
+
+**Media Path Handling:**
+
+- **Image discovery**: `wikipedia_image_downloader.py` filters by MIME type (image/* only), avoids audio/video
+- **SVG conversion**: Automatic SVG → PNG conversion with 3000px width (can be disabled with `--no-svg-to-png`)
+- **Folder naming**: Entity names sanitized for filesystem safety (`safe_folder_name()` in download_entities.py)
+- **File URL encoding**: Special characters double-encoded in file:// URLs for Resolve compatibility
 
 ---
 
