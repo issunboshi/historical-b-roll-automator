@@ -30,10 +30,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each entity has transcript context (surrounding text from mentions)
   4. Pipeline command `broll.py pipeline` includes enrich step
   5. Enriched entities_map.json contains priority and context fields
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during phase planning
+- [ ] 01-01-PLAN.md — Priority scoring with TDD (type weights, mention multiplier, position boost)
+- [ ] 01-02-PLAN.md — Context extraction with TDD (sliding window, overlap deduplication)
+- [ ] 01-03-PLAN.md — Pipeline integration (CLI, broll.py enrich command, checkpoint output)
 
 ### Phase 2: Search Strategy Generation
 **Goal**: Download stage uses LLM-generated search queries instead of naive entity names, improving Wikipedia match success rate
@@ -104,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Enrichment Foundation | 0/TBD | Not started | - |
+| 1. Enrichment Foundation | 0/3 | Ready to execute | - |
 | 2. Search Strategy Generation | 0/TBD | Not started | - |
 | 3. Priority-Based Filtering | 0/TBD | Not started | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
