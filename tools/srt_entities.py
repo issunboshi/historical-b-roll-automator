@@ -28,6 +28,9 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 RELATIVE_TIME_PREFIX_RE = re.compile(r"^\s*(\d+\s*(years?|months?|weeks?|days?)\s*(later|after|before|since)|\d{1,3}(st|nd|rd|th)\s+anniversary(?:\s+of)?\s+)", re.IGNORECASE)
 WHITESPACE_RE = re.compile(r"\s+")
