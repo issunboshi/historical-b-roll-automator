@@ -5,33 +5,33 @@
 See: .planning/PROJECT.md (updated 2026-01-25)
 
 **Core value:** Reliably find the RIGHT image for each entity — the one that matches the story context — without requiring manual fixes.
-**Current focus:** Phase 1 - Enrichment Foundation
+**Current focus:** Phase 1 - Enrichment Foundation (COMPLETE)
 
 ## Current Position
 
 Phase: 1 of 5 (Enrichment Foundation)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-01-26 — Completed 01-01-PLAN.md (Priority Scoring)
+Plan: 3 of 3 in current phase
+Status: Phase complete
+Last activity: 2026-01-26 — Completed 01-03-PLAN.md (Pipeline Wiring)
 
-Progress: [██░░░░░░░░] 13%
+Progress: [████░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
+- Total plans completed: 3
 - Average duration: 8 min
-- Total execution time: 0.27 hours
+- Total execution time: 0.40 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 | 2/3 | 16 min | 8 min |
+| 1 | 3/3 | 24 min | 8 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (7 min), 01-01 (9 min)
-- Trend: N/A (need more data)
+- Last 5 plans: 01-03 (8 min), 01-02 (7 min), 01-01 (9 min)
+- Trend: Stable at ~8 min/plan
 
 *Updated after each plan completion*
 
@@ -51,6 +51,9 @@ Recent decisions affecting current work:
 - 01-01: Places get lowest weight (0.3) as often contextual
 - 01-01: Priority score capped at 1.2 to prevent outliers
 - 01-01: Early mentions (first 20%) get 1.1x boost
+- 01-03: Enrichment writes separate file (enriched_entities.json) preserving original
+- 01-03: Atomic write pattern (temp file + os.replace) for safe JSON output
+- 01-03: Dual import fallback for module/script execution contexts
 
 ### Pending Todos
 
@@ -62,6 +65,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-26T09:56:33Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-01-26T10:08:00Z
+Stopped at: Completed 01-03-PLAN.md (Phase 1 complete)
 Resume file: None
