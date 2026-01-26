@@ -12,7 +12,7 @@ This roadmap transforms the existing Wikipedia image download pipeline from naiv
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Enrichment Foundation** - Add enrichment infrastructure and priority scoring
+- [x] **Phase 1: Enrichment Foundation** - Add enrichment infrastructure and priority scoring (completed 2026-01-26)
 - [ ] **Phase 2: Search Strategy Generation** - LLM-generated Wikipedia search queries
 - [ ] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions
 - [ ] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring
@@ -33,9 +33,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Priority scoring with TDD (type weights, mention multiplier, position boost)
+- [x] 01-01-PLAN.md — Priority scoring with TDD (type weights, mention multiplier, position boost) - completed 2026-01-26
 - [x] 01-02-PLAN.md — Context extraction with TDD (sliding window, overlap deduplication) - completed 2026-01-26
-- [ ] 01-03-PLAN.md — Pipeline integration (CLI, broll.py enrich command, checkpoint output)
+- [x] 01-03-PLAN.md — Pipeline integration (CLI, broll.py enrich command, checkpoint output) - completed 2026-01-26
 
 ### Phase 2: Search Strategy Generation
 **Goal**: Download stage uses LLM-generated search queries instead of naive entity names, improving Wikipedia match success rate
@@ -106,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Enrichment Foundation | 1/3 | In progress | - |
+| 1. Enrichment Foundation | 3/3 | ✓ Complete | 2026-01-26 |
 | 2. Search Strategy Generation | 0/TBD | Not started | - |
 | 3. Priority-Based Filtering | 0/TBD | Not started | - |
 | 4. Disambiguation | 0/TBD | Not started | - |

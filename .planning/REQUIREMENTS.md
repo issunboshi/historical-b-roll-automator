@@ -26,8 +26,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Entity Prioritization
 
 - [ ] **PRIO-01**: Calculate priority score for each entity based on type (people=1.0, events=0.9, concepts=0.6, places=0.3)
-- [ ] **PRIO-02**: Boost priority for entities mentioned multiple times (+0.05 per mention, max +0.2)
-- [ ] **PRIO-03**: Boost priority for entities mentioned in first 10% of transcript (+0.1)
+- [ ] **PRIO-02**: Boost priority for entities mentioned multiple times (diminishing returns: 1.3x at 2, 1.5x at 3, 1.6x at 4+)
+- [ ] **PRIO-03**: Boost priority for entities mentioned in first 20% of transcript (1.1x multiplier)
 - [ ] **PRIO-04**: Skip image download for entities below configurable priority threshold (default 0.3)
 - [ ] **PRIO-05**: For places, require minimum 2 mentions OR early mention (first 10%) to download
 
@@ -96,9 +96,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DISAM-05 | Phase 4 | Pending |
 | DISAM-06 | Phase 4 | Pending |
 | DISAM-07 | Phase 4 | Pending |
-| PRIO-01 | Phase 1 | Pending |
-| PRIO-02 | Phase 1 | Pending |
-| PRIO-03 | Phase 1 | Pending |
+| PRIO-01 | Phase 1 | Complete |
+| PRIO-02 | Phase 1 | Complete |
+| PRIO-03 | Phase 1 | Complete |
 | PRIO-04 | Phase 3 | Pending |
 | PRIO-05 | Phase 3 | Pending |
 | VAR-01 | Phase 5 | Pending |
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-25 after initial definition*
+*Last updated: 2026-01-26 after Phase 1 completion*
