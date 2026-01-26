@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [ ] 01-01-PLAN.md — Priority scoring with TDD (type weights, mention multiplier, position boost)
-- [ ] 01-02-PLAN.md — Context extraction with TDD (sliding window, overlap deduplication)
+- [x] 01-02-PLAN.md — Context extraction with TDD (sliding window, overlap deduplication) - completed 2026-01-26
 - [ ] 01-03-PLAN.md — Pipeline integration (CLI, broll.py enrich command, checkpoint output)
 
 ### Phase 2: Search Strategy Generation
@@ -106,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Enrichment Foundation | 0/3 | Ready to execute | - |
+| 1. Enrichment Foundation | 1/3 | In progress | - |
 | 2. Search Strategy Generation | 0/TBD | Not started | - |
 | 3. Priority-Based Filtering | 0/TBD | Not started | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
