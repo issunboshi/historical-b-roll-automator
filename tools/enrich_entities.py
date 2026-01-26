@@ -17,7 +17,7 @@ Usage:
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
 # Regex to match speaker labels like "Speaker 1", "Speaker 2", etc.
 SPEAKER_LABEL_RE = re.compile(r"^\s*Speaker\s+\d+\s*$", re.IGNORECASE | re.MULTILINE)
@@ -100,11 +100,10 @@ def merge_context_windows(
 ) -> str:
     """Merge context windows, handling overlaps.
 
-    Windows are considered overlapping if:
-    - Their index ranges overlap (end_a >= start_b - 1)
-
-    For overlapping windows, the texts are merged to avoid duplication.
-    Non-overlapping windows are joined with " [...] " separator.
+    Windows are considered overlapping if their index ranges overlap or
+    are adjacent (end_a >= start_b - 1). Overlapping windows are merged
+    into a single text span. Non-overlapping windows are joined with
+    " [...] " separator.
 
     Args:
         contexts: List of (start_idx, end_idx, context_text) tuples
@@ -121,47 +120,27 @@ def merge_context_windows(
     # Sort by start index
     sorted_contexts = sorted(contexts, key=lambda x: x[0])
 
-    # Merge overlapping windows
-    merged_groups: List[List[Tuple[int, int, str]]] = []
-    current_group: List[Tuple[int, int, str]] = [sorted_contexts[0]]
-    current_end = sorted_contexts[0][1]
+    # Merge overlapping ranges into groups
+    # Each merged entry: (merged_start, merged_end, combined_text)
+    merged: List[Tuple[int, int, str]] = []
+    current_start, current_end, current_text = sorted_contexts[0]
 
-    for ctx in sorted_contexts[1:]:
-        start_idx, end_idx, text = ctx
-        # Check if this window overlaps or is adjacent to current group
-        # Adjacent means start_idx <= current_end + 1
+    for start_idx, end_idx, text in sorted_contexts[1:]:
+        # Check if this window overlaps or is adjacent to current
         if start_idx <= current_end + 1:
-            # Overlapping or adjacent - add to current group
-            current_group.append(ctx)
+            # Overlapping or adjacent - extend the current range
             current_end = max(current_end, end_idx)
+            current_text = _collapse_whitespace(current_text + " " + text)
         else:
-            # Gap - start new group
-            merged_groups.append(current_group)
-            current_group = [ctx]
-            current_end = end_idx
+            # Gap - save current and start new
+            merged.append((current_start, current_end, current_text))
+            current_start, current_end, current_text = start_idx, end_idx, text
 
-    # Don't forget the last group
-    merged_groups.append(current_group)
+    # Don't forget the last one
+    merged.append((current_start, current_end, current_text))
 
-    # Build result from groups
-    group_texts = []
-    for group in merged_groups:
-        if len(group) == 1:
-            group_texts.append(group[0][2])
-        else:
-            # For overlapping windows, we need to combine their texts
-            # without duplicating the overlapping portions.
-            # Since we extract fresh from cues, we should re-extract
-            # the combined range. But we don't have access to cues here.
-            #
-            # Simpler approach: concatenate texts and deduplicate words
-            # that appear at boundaries. For now, just join with space
-            # and rely on the fact that upstream extract_entity_context
-            # will handle this by re-extracting combined ranges.
-            combined = " ".join(ctx[2] for ctx in group)
-            group_texts.append(_collapse_whitespace(combined))
-
-    return " [...] ".join(group_texts)
+    # Join non-overlapping groups with separator
+    return " [...] ".join(ctx[2] for ctx in merged)
 
 
 def extract_entity_context(
@@ -188,22 +167,17 @@ def extract_entity_context(
     if not entity_occurrences:
         return ""
 
-    # Build index map
-    cue_map: Dict[int, object] = {cue.index: cue for cue in srt_cues}
-    all_indices = sorted(cue_map.keys())
-
-    if not all_indices:
+    # Build index set for validation
+    valid_indices = {cue.index for cue in srt_cues}
+    if not valid_indices:
         return ""
-
-    min_cue = all_indices[0]
-    max_cue = all_indices[-1]
 
     # Extract contexts for each valid occurrence
     contexts: List[Tuple[int, int, str]] = []
 
     for occ in entity_occurrences:
         cue_idx = occ.get("cue_idx")
-        if cue_idx is None or cue_idx not in cue_map:
+        if cue_idx is None or cue_idx not in valid_indices:
             continue
 
         start_idx, end_idx, text = extract_single_context(
