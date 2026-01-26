@@ -8,24 +8,38 @@ This module provides:
 1. Priority scoring - Calculate entity importance scores (0.0-1.2) based on
    type, mention count, and position in transcript
 2. Context extraction - Extract transcript context around entity mentions
+3. CLI interface - Enrich entities_map.json with priority and context
 
 Priority scores are used in Phase 3 to filter low-value entities.
 Context extraction is used in Phase 2 for LLM-generated search queries
 and Phase 4 for entity disambiguation.
 
 Usage:
+    # As a module
     from tools.enrich_entities import calculate_priority, TYPE_WEIGHTS
-    from tools.enrich_entities import extract_entity_context
+    from tools.enrich_entities import extract_entity_context, enrich_entities
 
     # Priority scoring
     score = calculate_priority(entity, transcript_duration_seconds)
 
     # Context extraction
     context = extract_entity_context(srt_cues, entity_occurrences, window_cues=3)
+
+    # Full enrichment
+    enriched = enrich_entities(entities_map, srt_path)
+
+    # As a CLI
+    python tools/enrich_entities.py --map entities_map.json --srt video.srt --out enriched_entities.json
 """
 from __future__ import annotations
 
+import argparse
+import copy
+import json
+import os
 import re
+import sys
+import tempfile
 from typing import Dict, List, Tuple
 
 # =============================================================================
@@ -366,3 +380,187 @@ def extract_entity_context(
 
     # Merge and return
     return merge_context_windows(contexts)
+
+
+# =============================================================================
+# Main Enrichment Function (Plan 01-03)
+# =============================================================================
+
+
+def enrich_entities(entities_map: Dict, srt_path: str) -> Dict:
+    """Enrich entities_map with priority scores and transcript context.
+
+    This function takes an entities_map (from srt_entities.py) and adds:
+    - priority: float (0.0-1.2) based on type, mention count, position
+    - context: str - transcript text around entity mentions
+    - enrichment_status: "success" or "failed"
+
+    Args:
+        entities_map: Dict with structure {"entities": {...}, "source_srt": "..."}
+        srt_path: Path to the original SRT file (for context extraction)
+
+    Returns:
+        A new dict (deep copy) with enriched entities.
+        Does not mutate the original entities_map.
+
+    Raises:
+        FileNotFoundError: If srt_path does not exist
+    """
+    # Import parse_srt here to avoid circular imports at module load time
+    from tools.srt_entities import parse_srt
+
+    # Deep copy to avoid mutation
+    enriched = copy.deepcopy(entities_map)
+
+    # Load SRT cues
+    srt_cues = parse_srt(srt_path)
+
+    # Calculate transcript duration from last cue's end timecode
+    transcript_duration_seconds = 0.0
+    if srt_cues:
+        last_cue = srt_cues[-1]
+        transcript_duration_seconds = srt_time_to_seconds(last_cue.end)
+
+    entities = enriched.get("entities", {})
+
+    for entity_name, entity_data in entities.items():
+        try:
+            # Calculate priority score
+            priority = calculate_priority(entity_data, transcript_duration_seconds)
+            entity_data["priority"] = round(priority, 3)
+
+            # Extract context
+            occurrences = entity_data.get("occurrences", [])
+            context = extract_entity_context(srt_cues, occurrences, window_cues=3)
+            entity_data["context"] = context
+
+            entity_data["enrichment_status"] = "success"
+
+        except Exception as e:
+            # Mark as failed but continue with other entities
+            entity_data["priority"] = 0.0
+            entity_data["context"] = ""
+            entity_data["enrichment_status"] = "failed"
+            print(f"Warning: Failed to enrich entity '{entity_name}': {e}", file=sys.stderr)
+
+    return enriched
+
+
+# =============================================================================
+# CLI Interface (Plan 01-03)
+# =============================================================================
+
+
+def main(argv: List[str] = None) -> int:
+    """CLI entry point for entity enrichment.
+
+    Usage:
+        python tools/enrich_entities.py --map entities_map.json --srt video.srt [--out enriched.json]
+
+    Returns:
+        0 on success, 1 on general error, 2 on missing file
+    """
+    parser = argparse.ArgumentParser(
+        description="Enrich entities with priority scores and transcript context"
+    )
+    parser.add_argument(
+        "--map",
+        required=True,
+        help="Path to entities_map.json (from srt_entities.py)"
+    )
+    parser.add_argument(
+        "--srt",
+        required=True,
+        help="Path to original SRT file (for context extraction)"
+    )
+    parser.add_argument(
+        "--out",
+        help="Output path (default: enriched_entities.json in same dir as --map)"
+    )
+
+    args = parser.parse_args(argv)
+
+    # Validate SRT file exists
+    if not os.path.exists(args.srt):
+        print(f"Error: SRT file not found: {args.srt}", file=sys.stderr)
+        return 2
+
+    # Validate map file exists
+    if not os.path.exists(args.map):
+        print(f"Error: entities_map not found: {args.map}", file=sys.stderr)
+        return 2
+
+    # Determine output path
+    if args.out:
+        out_path = args.out
+    else:
+        map_dir = os.path.dirname(os.path.abspath(args.map))
+        out_path = os.path.join(map_dir, "enriched_entities.json")
+
+    # Load entities_map
+    try:
+        with open(args.map, "r", encoding="utf-8") as f:
+            entities_map = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in {args.map}: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: Failed to read {args.map}: {e}", file=sys.stderr)
+        return 1
+
+    # Handle empty entities
+    entities = entities_map.get("entities", {})
+    if not entities:
+        print(f"Warning: No entities found in {args.map}", file=sys.stderr)
+        # Still write the (empty) enriched file
+        enriched = copy.deepcopy(entities_map)
+    else:
+        # Enrich entities
+        try:
+            enriched = enrich_entities(entities_map, args.srt)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"Error: Failed to enrich entities: {e}", file=sys.stderr)
+            return 1
+
+    # Write output atomically (temp file + rename)
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        # Write to temp file first
+        fd, temp_path = tempfile.mkstemp(suffix=".json", dir=out_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(enriched, f, ensure_ascii=False, indent=2)
+            # Atomic rename
+            os.replace(temp_path, out_path)
+        except Exception:
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
+    except Exception as e:
+        print(f"Error: Failed to write {out_path}: {e}", file=sys.stderr)
+        return 1
+
+    # Success summary
+    entity_count = len(enriched.get("entities", {}))
+    success_count = sum(
+        1 for e in enriched.get("entities", {}).values()
+        if e.get("enrichment_status") == "success"
+    )
+    print(f"Enriched {success_count}/{entity_count} entities")
+    print(f"Output: {os.path.abspath(out_path)}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
