@@ -294,7 +294,7 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
 
 def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
-    """Run the full pipeline: extract -> download -> xml."""
+    """Run the full pipeline: extract -> enrich -> download -> xml."""
     # Validate required inputs
     if not args.srt:
         print("Error: --srt is required for pipeline command", file=sys.stderr)
@@ -316,6 +316,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     # Define intermediate file paths
     entities_path = output_dir / "entities_map.json"
+    enriched_entities_path = output_dir / "enriched_entities.json"
     xml_path = output_dir / "broll_timeline.xml"
     
     print(f"\n{'#'*60}")
@@ -341,24 +342,36 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if result != 0:
         print("\nPipeline failed at: entity extraction", file=sys.stderr)
         return result
-    
-    # Step 2: Download images
-    download_args = argparse.Namespace(
+
+    # Step 2: Enrich entities
+    enrich_args = argparse.Namespace(
         map=str(entities_path),
+        srt=str(srt_path),
+        output=str(enriched_entities_path),
+    )
+
+    result = cmd_enrich(enrich_args, config)
+    if result != 0:
+        print("\nPipeline failed at: entity enrichment", file=sys.stderr)
+        return result
+
+    # Step 3: Download images
+    download_args = argparse.Namespace(
+        map=str(enriched_entities_path),
         images_per_entity=args.images_per_entity,
         delay=args.download_delay,
         parallel=args.parallel,
         no_svg_to_png=args.no_svg_to_png,
     )
-    
+
     result = cmd_download(download_args, config)
     if result != 0:
         print("\nPipeline failed at: image download", file=sys.stderr)
         return result
-    
-    # Step 3: Generate XML
+
+    # Step 4: Generate XML
     xml_args = argparse.Namespace(
-        map=str(entities_path),
+        map=str(enriched_entities_path),
         output=str(xml_path),
         output_dir=None,
         fps=args.fps,
@@ -379,8 +392,9 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     print(f"# Pipeline Complete!")
     print(f"#")
     print(f"# Output files:")
-    print(f"#   - Entities: {entities_path}")
-    print(f"#   - XML:      {xml_path}")
+    print(f"#   - Entities:          {entities_path}")
+    print(f"#   - Enriched Entities: {enriched_entities_path}")
+    print(f"#   - XML:               {xml_path}")
     print(f"#")
     print(f"# Next steps:")
     print(f"#   1. Open DaVinci Resolve")
