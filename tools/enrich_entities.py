@@ -407,7 +407,11 @@ def enrich_entities(entities_map: Dict, srt_path: str) -> Dict:
         FileNotFoundError: If srt_path does not exist
     """
     # Import parse_srt here to avoid circular imports at module load time
-    from tools.srt_entities import parse_srt
+    # Handle both direct execution and module import contexts
+    try:
+        from tools.srt_entities import parse_srt
+    except ImportError:
+        from srt_entities import parse_srt
 
     # Deep copy to avoid mutation
     enriched = copy.deepcopy(entities_map)
