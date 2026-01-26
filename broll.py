@@ -206,6 +206,44 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 1
 
 
+def cmd_enrich(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Run entity enrichment to add priority scores and context."""
+    script = resolve_script_path("enrich_entities.py")
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: entities_map not found: {map_path}", file=sys.stderr)
+        return 1
+
+    srt_path = Path(args.srt)
+    if not srt_path.exists():
+        print(f"Error: SRT file not found: {srt_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = map_path.parent / "enriched_entities.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(script),
+        "--map", str(map_path),
+        "--srt", str(srt_path),
+        "--out", str(out_path),
+    ]
+
+    try:
+        run_step("Enriching entities with priority and context", cmd)
+        print(f"\nEnriched entities saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Entity enrichment failed: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Generate FCP XML from entities map."""
     script = resolve_script_path("generate_broll_xml.py")
@@ -381,6 +419,7 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     scripts = [
         ("srt_entities.py", "Entity extraction"),
+        ("enrich_entities.py", "Entity enrichment"),
         ("download_entities.py", "Image download"),
         ("generate_broll_xml.py", "XML generation"),
         ("wikipedia_image_downloader.py", "Wikipedia downloader"),
@@ -481,6 +520,15 @@ Examples:
     p_download.add_argument("-j", "--parallel", type=int, default=4,
                             help="Number of parallel downloads (default: 4)")
     p_download.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
+
+    # Enrich command
+    p_enrich = subparsers.add_parser(
+        "enrich",
+        help="Enrich entities with priority scores and transcript context",
+    )
+    p_enrich.add_argument("--map", required=True, help="Path to entities_map.json")
+    p_enrich.add_argument("--srt", required=True, help="Path to original SRT file")
+    p_enrich.add_argument("--output", "-o", help="Output JSON path (default: enriched_entities.json)")
     
     # XML command
     p_xml = subparsers.add_parser(
@@ -517,6 +565,7 @@ Examples:
         "pipeline": cmd_pipeline,
         "extract": cmd_extract,
         "download": cmd_download,
+        "enrich": cmd_enrich,
         "xml": cmd_xml,
         "status": cmd_status,
     }
