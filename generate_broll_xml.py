@@ -37,6 +37,9 @@ from urllib.parse import quote
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
+# Quality level ordering for filtering
+QUALITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
+
 
 def path_to_file_url(filepath: str) -> str:
     """
@@ -305,6 +308,9 @@ After generating the XML:
                         help='Number of video tracks to use for B-Roll (default: 4)')
     parser.add_argument('--allow-non-pd', action='store_true',
                         help='Include non-public-domain images')
+    parser.add_argument('--min-match-quality', default='high',
+                        choices=['high', 'medium', 'low', 'none'],
+                        help='Minimum match quality to include (default: high)')
     parser.add_argument('--timeline-name', default='B-Roll Timeline',
                         help='Name for the timeline (default: B-Roll Timeline)')
     
@@ -323,10 +329,30 @@ After generating the XML:
     if not entities:
         print("ERROR: No 'entities' found in JSON", file=sys.stderr)
         sys.exit(1)
-    
+
+    # Filter entities by match quality
+    excluded_entities = []
+    min_quality_level = QUALITY_ORDER.get(args.min_match_quality, 3)
+
+    qualified_entities = {}
+    for entity_name, payload in entities.items():
+        # Get match quality from disambiguation metadata
+        disambiguation = payload.get('disambiguation', {})
+        entity_quality = disambiguation.get('match_quality', 'high')  # Default high for pre-Phase4 entities
+        entity_quality_level = QUALITY_ORDER.get(entity_quality, 0)
+
+        if entity_quality_level < min_quality_level:
+            excluded_entities.append({
+                'name': entity_name,
+                'quality': entity_quality,
+                'reason': f'quality {entity_quality} below threshold {args.min_match_quality}'
+            })
+            continue
+        qualified_entities[entity_name] = payload
+
     # Build list of clips with timecodes
     clips = []
-    for entity_name, payload in entities.items():
+    for entity_name, payload in qualified_entities.items():
         images = payload.get('images', [])
         occurrences = payload.get('occurrences', [])
         
@@ -417,15 +443,34 @@ After generating the XML:
         track_end[chosen_track] = clip_end
         
         print(f"  V{chosen_track}: {clip['name']} at {frames_to_timecode(clip_start, args.fps)}")
-    
+
     print(f"\nPlacing {len(placements)} clips, skipped {skipped}")
+
+    # Log excluded entities
+    if excluded_entities:
+        print(f"\nExcluded {len(excluded_entities)} entities (below {args.min_match_quality} quality):")
+        for exc in excluded_entities[:10]:  # Show first 10
+            print(f"  - {exc['name']}: {exc['quality']}")
+        if len(excluded_entities) > 10:
+            print(f"  ... and {len(excluded_entities) - 10} more")
     
     # Generate XML
     xml_root = create_fcp_xml(placements, args.fps, args.timeline_name, args.duration)
     xml_string = prettify_xml(xml_root)
     
-    # Write output
+    # Write excluded entities log
     output_path = Path(args.output)
+    excluded_file = output_path.with_suffix('.excluded.json')
+    with open(excluded_file, 'w', encoding='utf-8') as f:
+        json.dump({
+            'min_quality': args.min_match_quality,
+            'excluded_count': len(excluded_entities),
+            'entities': excluded_entities
+        }, f, indent=2)
+    if excluded_entities:
+        print(f"Excluded entities log: {excluded_file}")
+
+    # Write output
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<!DOCTYPE xmeml>\n')
