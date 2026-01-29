@@ -197,10 +197,15 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     if args.delay:
         cmd.extend(["--delay", str(args.delay)])
-    
+
     if args.no_svg_to_png:
         cmd.append("--no-svg-to-png")
-    
+
+    if hasattr(args, 'min_priority') and args.min_priority is not None:
+        cmd.extend(["--min-priority", str(args.min_priority)])
+    if getattr(args, 'verbose', False):
+        cmd.append("-v")
+
     try:
         run_step("Downloading images from Wikipedia", cmd)
         print(f"\nEntities map updated: {map_path.absolute()}")
@@ -422,6 +427,8 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         delay=args.download_delay,
         parallel=args.parallel,
         no_svg_to_png=args.no_svg_to_png,
+        min_priority=getattr(args, 'min_priority', None),
+        verbose=getattr(args, 'verbose', False),
     )
 
     result = cmd_download(download_args, config)
@@ -577,6 +584,10 @@ Examples:
     p_pipeline.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
     p_pipeline.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
     p_pipeline.add_argument("--cache-dir", help="Wikipedia cache directory")
+    p_pipeline.add_argument("--min-priority", type=float,
+                            help="Minimum priority threshold for entity filtering (0.0 disables, default: 0.5)")
+    p_pipeline.add_argument("-v", "--verbose", action="store_true",
+                            help="Show per-entity skip messages during download")
     
     # Extract command
     p_extract = subparsers.add_parser(
@@ -603,6 +614,10 @@ Examples:
     p_download.add_argument("-j", "--parallel", type=int, default=4,
                             help="Number of parallel downloads (default: 4)")
     p_download.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
+    p_download.add_argument("--min-priority", type=float,
+                            help="Minimum priority threshold for entity filtering (0.0 disables, default: 0.5)")
+    p_download.add_argument("-v", "--verbose", action="store_true",
+                            help="Show per-entity skip messages")
 
     # Enrich command
     p_enrich = subparsers.add_parser(
