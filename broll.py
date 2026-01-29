@@ -244,6 +244,47 @@ def cmd_enrich(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 1
 
 
+def cmd_strategies(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Generate LLM-powered Wikipedia search strategies."""
+    script = resolve_script_path("generate_search_strategies.py")
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: enriched_entities map not found: {map_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = map_path.parent / "strategies_entities.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(script),
+        "--map", str(map_path),
+        "--out", str(out_path),
+    ]
+
+    if args.video_context:
+        cmd.extend(["--video-context", args.video_context])
+
+    if args.batch_size:
+        cmd.extend(["--batch-size", str(args.batch_size)])
+
+    if args.cache_dir:
+        cmd.extend(["--cache-dir", args.cache_dir])
+
+    try:
+        run_step("Generating search strategies", cmd)
+        print(f"\nSearch strategies saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Search strategy generation failed: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Generate FCP XML from entities map."""
     script = resolve_script_path("generate_broll_xml.py")
@@ -543,7 +584,18 @@ Examples:
     p_enrich.add_argument("--map", required=True, help="Path to entities_map.json")
     p_enrich.add_argument("--srt", required=True, help="Path to original SRT file")
     p_enrich.add_argument("--output", "-o", help="Output JSON path (default: enriched_entities.json)")
-    
+
+    # Strategies command
+    p_strategies = subparsers.add_parser(
+        "strategies",
+        help="Generate LLM-powered Wikipedia search strategies",
+    )
+    p_strategies.add_argument("--map", required=True, help="Path to enriched_entities.json")
+    p_strategies.add_argument("--output", "-o", help="Output JSON path")
+    p_strategies.add_argument("--video-context", help="Video topic/title for disambiguation")
+    p_strategies.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
+    p_strategies.add_argument("--cache-dir", help="Wikipedia validation cache directory")
+
     # XML command
     p_xml = subparsers.add_parser(
         "xml",
@@ -580,6 +632,7 @@ Examples:
         "extract": cmd_extract,
         "download": cmd_download,
         "enrich": cmd_enrich,
+        "strategies": cmd_strategies,
         "xml": cmd_xml,
         "status": cmd_status,
     }
