@@ -613,6 +613,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("All entities already have images. Nothing to download.")
         return 0
 
+    # Create shared session for Wikipedia API calls
+    wiki_session = requests.Session()
+    wiki_session.headers.update({
+        "User-Agent": f"B-Roll-Finder/1.0 ({args.user_agent})"
+    })
+
+    # Extract video topic for disambiguation context
+    video_topic = entities_map.get("video_context", "")
+    if not video_topic:
+        source_srt = entities_map.get("source_srt", "")
+        if source_srt:
+            video_topic = os.path.splitext(os.path.basename(source_srt))[0]
+            video_topic = video_topic.replace("_", " ").replace("-", " ")
+        else:
+            video_topic = "Unknown video"
+
     # Apply priority filtering BEFORE parallel execution (thread-safe)
     to_download = []
     skipped_entities = []
@@ -657,9 +673,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("Priority filtering: DISABLED")
     print()
 
-    # Track results: entity_name -> (success, entity_dir, matched_term)
-    results: Dict[str, Tuple[bool, Path, Optional[str]]] = {}
-    
+    # Track results: entity_name -> (success, entity_dir, matched_term, disambiguation_result)
+    results: Dict[str, Tuple[bool, Path, Optional[str], Optional[dict]]] = {}
+
     if workers == 1:
         # Sequential mode (original behavior, slightly optimized)
         for idx, (entity_name, payload) in enumerate(to_download, start=1):
@@ -669,7 +685,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 search_terms = [entity_name]
             else:
                 search_terms = get_search_terms(entity_name, payload)
-            name, success, entity_dir, matched_term = download_entity(
+            name, success, entity_dir, matched_term, disambiguation_result = download_entity(
                 entity_name=entity_name,
                 entity_type=entity_type,
                 out_dir=out_dir,
@@ -684,8 +700,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 current_idx=idx,
                 search_terms=search_terms,
                 payload=payload,
+                use_disambiguation=not args.no_disambiguation,
+                disambiguation_client=disambiguation_client,
+                disambiguation_cache=disambiguation_cache,
+                disambiguation_overrides=disambiguation_overrides,
+                video_topic=video_topic,
+                session=wiki_session,
             )
-            results[name] = (success, entity_dir, matched_term)
+            results[name] = (success, entity_dir, matched_term, disambiguation_result)
     else:
         # Parallel mode using ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -713,6 +735,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     current_idx=idx,
                     search_terms=search_terms,
                     payload=payload,
+                    use_disambiguation=not args.no_disambiguation,
+                    disambiguation_client=disambiguation_client,
+                    disambiguation_cache=disambiguation_cache,
+                    disambiguation_overrides=disambiguation_overrides,
+                    video_topic=video_topic,
+                    session=wiki_session,
                 )
                 futures[future] = entity_name
 
@@ -720,11 +748,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             for future in as_completed(futures):
                 entity_name = futures[future]
                 try:
-                    name, success, entity_dir, matched_term = future.result()
-                    results[name] = (success, entity_dir, matched_term)
+                    name, success, entity_dir, matched_term, disambiguation_result = future.result()
+                    results[name] = (success, entity_dir, matched_term, disambiguation_result)
                 except Exception as e:
                     print(f"Error processing {entity_name}: {e}", file=sys.stderr)
-                    results[entity_name] = (False, out_dir / safe_folder_name(entity_name), None)
+                    results[entity_name] = (False, out_dir / safe_folder_name(entity_name), None, None)
     
     # Harvest results and update entities map
     print()
@@ -745,7 +773,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         if entity_name not in results:
             continue  # Already had images
 
-        success, entity_dir, matched_term = results[entity_name]
+        success, entity_dir, matched_term, disambiguation_result = results[entity_name]
+
+        # Track disambiguation metadata
+        if disambiguation_result:
+            payload["disambiguation"] = {
+                "source": disambiguation_result.get("disambiguation_source"),
+                "confidence": disambiguation_result.get("confidence"),
+                "match_quality": disambiguation_result.get("match_quality"),
+                "rationale": disambiguation_result.get("rationale"),
+                "candidates_considered": disambiguation_result.get("candidates_considered"),
+                "chosen_article": disambiguation_result.get("wikipedia_title"),
+            }
+
         if not success:
             fail_count += 1
             payload["matched_strategy"] = None
@@ -814,6 +854,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  queries:    {strategy_stats['query']} entities")
         print(f"  fallback:   {strategy_stats['fallback']} entities")
         print(f"  failed:     {strategy_stats['failed']} entities")
+
+    # Write review file after all downloads (if disambiguation was used)
+    if not args.no_disambiguation and _review_entries:
+        review_path = Path(args.review_file)
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        write_review_file(_review_entries, review_path)
+        print()
+        print(f"Disambiguation review file: {review_path}")
+        print(f"  Flagged entities: {len(_review_entries)} (confidence 4-6)")
+
+    # Add disambiguation stats to summary
+    if not args.no_disambiguation:
+        disamb_stats = {
+            "auto_accepted": sum(1 for e in entities.values() if e.get("disambiguation", {}).get("confidence", 0) >= 7),
+            "flagged": len(_review_entries),
+            "skipped": sum(1 for e in entities.values() if e.get("disambiguation", {}).get("match_quality") == "none"),
+        }
+        print()
+        print("Disambiguation summary:")
+        print(f"  Auto-accepted (confidence >= 7): {disamb_stats['auto_accepted']}")
+        print(f"  Flagged for review (4-6):        {disamb_stats['flagged']}")
+        print(f"  Skipped (low confidence):        {disamb_stats['skipped']}")
 
     print()
     print(f"Updated {args.map}")
