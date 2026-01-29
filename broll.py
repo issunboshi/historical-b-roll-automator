@@ -333,7 +333,9 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     if allow_non_pd:
         cmd.append("--allow-non-pd")
-    
+
+    cmd.extend(["--min-match-quality", args.min_match_quality])
+
     try:
         run_step("Generating FCP XML timeline", cmd)
         print(f"\nXML saved to: {out_path.absolute()}")
@@ -447,6 +449,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         tracks=args.tracks,
         allow_non_pd=args.allow_non_pd,
         timeline_name=args.timeline_name,
+        min_match_quality=getattr(args, 'min_match_quality', 'high'),
     )
     
     result = cmd_xml(xml_args, config)
@@ -588,6 +591,9 @@ Examples:
                             help="Minimum priority threshold for entity filtering (0.0 disables, default: 0.5)")
     p_pipeline.add_argument("-v", "--verbose", action="store_true",
                             help="Show per-entity skip messages during download")
+    p_pipeline.add_argument("--min-match-quality", default='high',
+                            choices=['high', 'medium', 'low', 'none'],
+                            help="Minimum match quality to include in timeline (default: high)")
     
     # Extract command
     p_extract = subparsers.add_parser(
@@ -653,6 +659,9 @@ Examples:
     p_xml.add_argument("--tracks", "-t", type=int, help="Number of B-roll tracks")
     p_xml.add_argument("--allow-non-pd", action="store_true", help="Include non-public-domain images")
     p_xml.add_argument("--timeline-name", help="Name for the timeline")
+    p_xml.add_argument("--min-match-quality", default='high',
+                       choices=['high', 'medium', 'low', 'none'],
+                       help="Minimum match quality to include in timeline (default: high)")
     
     # Status command
     subparsers.add_parser(
