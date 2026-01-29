@@ -373,23 +373,26 @@ After generating the XML:
             tc = occ.get('timecode')
             if not tc:
                 continue
-            
+
             img = filtered_images[idx % len(filtered_images)]
             img_path = img.get('path', '')
-            
+
             if not img_path or not os.path.exists(img_path):
                 print(f"WARNING: Image not found: {img_path}", file=sys.stderr)
                 continue
-            
+
             seconds = srt_timecode_to_seconds(tc)
             frame = seconds_to_frames(seconds, args.fps)
-            
+
             clips.append({
                 'frame': frame,
                 'seconds': seconds,
                 'path': os.path.abspath(img_path),
                 'name': f"{entity_name} - {img.get('filename', os.path.basename(img_path))}",
                 'entity': entity_name,
+                'occurrence_index': idx,                        # Which occurrence this is
+                'image_index': idx % len(filtered_images),      # Which image was used
+                'total_images': len(filtered_images),           # How many images available
             })
     
     if not clips:
@@ -445,6 +448,14 @@ After generating the XML:
         print(f"  V{chosen_track}: {clip['name']} at {frames_to_timecode(clip_start, args.fps)}")
 
     print(f"\nPlacing {len(placements)} clips, skipped {skipped}")
+
+    # Calculate rotation stats
+    entities_with_rotation = set()
+    for clip in clips:
+        if clip.get('total_images', 1) > 1:
+            entities_with_rotation.add(clip.get('entity'))
+
+    print(f"Entities using image rotation: {len(entities_with_rotation)}")
 
     # Log excluded entities
     if excluded_entities:
