@@ -17,6 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions (completed 2026-01-29)
 - [x] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring (completed 2026-01-29)
 - [x] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering (completed 2026-01-29)
+- [ ] **Phase 6: Quality Filtering CLI Integration** - Expose --min-match-quality through broll.py (gap closure)
 
 ## Phase Details
 
@@ -105,10 +106,25 @@ Plans:
 - [x] 05-01-PLAN.md — Dynamic image count for multi-mention entities (5 images for 3+ mentions) - completed 2026-01-29
 - [x] 05-02-PLAN.md — Image rotation metadata tracking and quality-based timeline filtering - completed 2026-01-29
 
+### Phase 6: Quality Filtering CLI Integration
+**Goal**: Expose --min-match-quality flag through broll.py so users can control quality thresholds via the main CLI
+**Depends on**: Phase 5
+**Requirements**: QUAL-06 (CLI integration)
+**Gap Closure**: Closes GAP-001 from v1 audit
+**Success Criteria** (what must be TRUE):
+  1. `broll.py pipeline --min-match-quality medium` works and filters timeline
+  2. `broll.py xml --min-match-quality medium` works and filters timeline
+  3. Default value is "high" (consistent with generate_broll_xml.py)
+  4. Help text documents available quality levels (high, medium, low, none)
+**Plans**: 1 plan
+
+Plans:
+- [ ] 06-01-PLAN.md — Wire --min-match-quality through broll.py pipeline and xml commands
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -117,3 +133,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
 | 4. Disambiguation | 3/3 | Complete | 2026-01-29 |
 | 5. Image Variety & Quality Filtering | 2/2 | Complete | 2026-01-29 |
+| 6. Quality Filtering CLI Integration | 0/1 | Pending | — |
