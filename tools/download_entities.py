@@ -298,23 +298,89 @@ def download_entity(
     current_idx: int,
     search_terms: List[str],
     payload: Dict,
-) -> Tuple[str, bool, Path, Optional[str]]:
+    # New disambiguation parameters
+    use_disambiguation: bool = True,
+    disambiguation_client: Optional[Anthropic] = None,
+    disambiguation_cache: Optional[Cache] = None,
+    disambiguation_overrides: Optional[dict] = None,
+    video_topic: str = "Unknown video",
+    session: Optional[requests.Session] = None,
+) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
-    Download images for a single entity using multiple search strategies.
+    Download images for a single entity with disambiguation support.
 
-    Returns: (entity_name, success, entity_dir, matched_term)
+    Returns: (entity_name, success, entity_dir, matched_term, disambiguation_result)
     - matched_term is the search term that succeeded (or None if all failed)
+    - disambiguation_result contains confidence, match_quality, rationale if disambiguation was used
 
     Thread-safe: only uses safe_print for output.
     """
     entity_dir = out_dir / safe_folder_name(entity_name)
+    disambiguation_result = None
+
+    # Check for manual override first
+    if disambiguation_overrides and entity_name in disambiguation_overrides:
+        override_title = disambiguation_overrides[entity_name]
+        safe_print(f"[{current_idx}/{total_entities}] Using override for {entity_name}: {override_title}")
+        search_terms = [override_title]
+        disambiguation_result = {
+            "disambiguation_source": "manual_override",
+            "confidence": 10,
+            "match_quality": "high",
+            "wikipedia_title": override_title,
+        }
+
+    # Run disambiguation if enabled and no override
+    elif use_disambiguation and disambiguation_client and session:
+        transcript_context = payload.get("context", "")
+
+        # Search for top 3 candidates
+        best_query = search_terms[0] if search_terms else entity_name
+        candidates = search_wikipedia_candidates(session, best_query, limit=3)
+
+        if candidates:
+            # Run disambiguation
+            decision = disambiguate_search_results(
+                entity_name=entity_name,
+                entity_type=entity_type,
+                transcript_context=transcript_context,
+                video_topic=video_topic,
+                search_results=candidates,
+                session=session,
+                client=disambiguation_client,
+                cache=disambiguation_cache
+            )
+
+            # Process result
+            disambiguation_result = process_disambiguation_result(
+                decision=decision,
+                entity_name=entity_name,
+                entity_type=entity_type,
+                candidates=fetch_candidate_info([c["title"] for c in candidates], disambiguation_cache),
+                transcript_context=transcript_context,
+                video_topic=video_topic,
+                review_entries=_review_entries  # Thread-safe via lock in process_disambiguation_result
+            )
+
+            # Log decision
+            log_disambiguation_decision(entity_name, decision, disambiguation_result.get("action", "unknown"))
+
+            # Apply confidence routing
+            action = disambiguation_result.get("action", "download")
+            if action == "skip":
+                safe_print(f"[{current_idx}/{total_entities}] Skipping {entity_name}: low confidence ({decision.confidence})")
+                return (entity_name, False, out_dir / safe_folder_name(entity_name), None, disambiguation_result)
+
+            # Use chosen article for download
+            if decision.chosen_article:
+                search_terms = [decision.chosen_article] + search_terms
 
     # If the entity output directory already exists, skip the download step
     if entity_dir.exists():
         safe_print(f"[{current_idx}/{total_entities}] Skipping: {entity_name} (already downloaded)")
         # Determine matched_term from existing directory
         # Since we can't know which term was used, assume it was the entity name
-        return (entity_name, True, entity_dir, entity_name)
+        return (entity_name, True, entity_dir, entity_name, disambiguation_result)
 
     safe_print(f"[{current_idx}/{total_entities}] Downloading: {entity_name}")
 
@@ -341,7 +407,7 @@ def download_entity(
                         shutil.rmtree(entity_dir)
                     search_term_dir.rename(entity_dir)
                 safe_print(f"[{current_idx}/{total_entities}] Done: {entity_name} (matched: {search_term})")
-                return (entity_name, True, entity_dir, search_term)
+                return (entity_name, True, entity_dir, search_term, disambiguation_result)
             continue
 
         try:
@@ -387,7 +453,7 @@ def download_entity(
                         search_term_dir.rename(entity_dir)
 
                     safe_print(f"[{current_idx}/{total_entities}] Done: {entity_name} (matched: {search_term})")
-                    return (entity_name, True, entity_dir, search_term)
+                    return (entity_name, True, entity_dir, search_term, disambiguation_result)
                 else:
                     safe_print(f"[{current_idx}/{total_entities}]   No images found for: {search_term}")
             else:
@@ -399,7 +465,7 @@ def download_entity(
 
     # All search terms failed
     safe_print(f"[{current_idx}/{total_entities}] Failed: {entity_name} - all search terms failed", file=sys.stderr)
-    return (entity_name, False, entity_dir, None)
+    return (entity_name, False, entity_dir, None, disambiguation_result)
 
 
 def harvest_images(entity_dir: Path) -> List[Dict[str, str]]:
