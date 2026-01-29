@@ -82,10 +82,12 @@ Plans:
   7. Disambiguation depth limited to 3 attempts (prevents infinite loops)
   8. Match quality (high/medium/low/none) recorded for each entity
   9. Disambiguation log includes candidates considered, chosen article, confidence, and rationale
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during phase planning
+- [ ] 04-01-PLAN.md — Disambiguation module (multi-candidate search, disambiguation page detection, LLM decisions with confidence scoring)
+- [ ] 04-02-PLAN.md — Quality tracking and review files (confidence routing, match quality, review/override JSON)
+- [ ] 04-03-PLAN.md — Download stage integration (wire disambiguation into download flow)
 
 ### Phase 5: Image Variety & Quality Filtering
 **Goal**: Entities mentioned multiple times use different images at each mention, and timeline generation filters by match quality
@@ -112,5 +114,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
 | 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
-| 4. Disambiguation | 0/TBD | Not started | - |
+| 4. Disambiguation | 0/3 | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
