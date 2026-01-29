@@ -34,14 +34,30 @@ except ImportError:
     from enrich_entities import srt_time_to_seconds
 
 
-# Thread-safe print
+# Thread-safe print and logging
 _print_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def safe_print(*args, **kwargs):
     """Thread-safe print function."""
     with _print_lock:
         print(*args, **kwargs)
+
+
+def setup_logging(verbose: bool):
+    """Setup logging based on verbose flag.
+
+    Args:
+        verbose: If True, show INFO level logs (per-entity skip messages).
+                If False, show only WARNING and above.
+    """
+    level = logging.INFO if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format='%(message)s',
+        stream=sys.stderr
+    )
 
 
 def safe_folder_name(name: str) -> str:
@@ -437,6 +453,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Show per-entity skip messages")
     args = parser.parse_args(argv)
 
+    # Setup logging based on verbose flag
+    setup_logging(args.verbose)
+
     with open(args.map, "r", encoding="utf-8") as f:
         entities_map = json.load(f)
     entities: Dict[str, Dict] = entities_map.get("entities", {})
@@ -450,25 +469,71 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("wikipedia_image_downloader.py not found.", file=sys.stderr)
         return 2
 
-    # Filter to entities that need downloading
-    to_download = [
+    # Get transcript duration for position calculations
+    transcript_duration = entities_map.get("metadata", {}).get("transcript_duration")
+    if transcript_duration is None:
+        # Compute from maximum timecode in any entity's occurrences
+        max_time = 0.0
+        for entity_data in entities.values():
+            for occ in entity_data.get("occurrences", []):
+                timecode = occ.get("timecode")
+                if timecode:
+                    time_secs = srt_time_to_seconds(timecode)
+                    max_time = max(max_time, time_secs)
+        transcript_duration = max_time
+
+    # Filter to entities that need downloading (don't already have images)
+    need_download = [
         (name, payload) for name, payload in entities.items()
         if not payload.get("images")
     ]
-    
-    if not to_download:
+
+    if not need_download:
         print("All entities already have images. Nothing to download.")
         return 0
-    
+
+    # Apply priority filtering BEFORE parallel execution (thread-safe)
+    to_download = []
+    skipped_entities = []
+
+    for entity_name, entity_data in need_download:
+        priority = entity_data.get("priority", 0.0)
+        should_skip, skip_reason = should_skip_entity(
+            entity_name,
+            entity_data,
+            args.min_priority,
+            transcript_duration
+        )
+
+        if should_skip:
+            logger.info(f"Skipping {entity_name}: {skip_reason}")
+            skipped_entities.append({
+                "name": entity_name,
+                "entity_type": entity_data.get("entity_type"),
+                "priority": priority,
+                "mention_count": len(entity_data.get("occurrences", [])),
+                "reason": skip_reason
+            })
+        else:
+            to_download.append((entity_name, entity_data))
+
+    if not to_download and not skipped_entities:
+        print("No entities to process.")
+        return 0
+
     total = len(to_download)
-    workers = max(1, min(args.parallel, total))  # Don't use more workers than entities
-    
+    workers = max(1, min(args.parallel, total)) if total > 0 else 1
+
     print(f"Downloading images for {total} entities using {workers} parallel worker(s)...")
     print(f"Delay between requests: {args.delay}s")
     if args.no_strategies:
         print("Strategy iteration: DISABLED (using entity names only)")
     else:
         print("Strategy iteration: ENABLED (trying LLM-generated search queries)")
+    if args.min_priority > 0:
+        print(f"Priority filtering: ENABLED (min_priority={args.min_priority})")
+    else:
+        print("Priority filtering: DISABLED")
     print()
 
     # Track results: entity_name -> (success, entity_dir, matched_term)
@@ -604,14 +669,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             payload["download_status"] = "no_images"
             strategy_stats["failed"] += 1
 
+    # Add skipped entities to output JSON
+    entities_map["skipped"] = skipped_entities
+
     # Write updated map
     with open(args.map, "w", encoding="utf-8") as f:
         json.dump(entities_map, f, ensure_ascii=False, indent=2)
 
     print()
-    print(f"Updated {args.map}")
-    print(f"  Success: {success_count} entities")
-    print(f"  Failed:  {fail_count} entities")
+    print("=" * 60)
+    print("Download Summary")
+    print("=" * 60)
+    print(f"  Downloaded: {success_count} entities")
+    print(f"  Skipped:    {len(skipped_entities)} entities")
+    print(f"  Failed:     {fail_count} entities")
+    print("=" * 60)
 
     # Show strategy breakdown if strategies were used
     if not args.no_strategies and sum(strategy_stats.values()) > 0:
@@ -621,6 +693,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  queries:    {strategy_stats['query']} entities")
         print(f"  fallback:   {strategy_stats['fallback']} entities")
         print(f"  failed:     {strategy_stats['failed']} entities")
+
+    print()
+    print(f"Updated {args.map}")
 
     return 0
 
