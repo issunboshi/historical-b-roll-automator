@@ -4,8 +4,10 @@ broll.py - Unified CLI for the B-Roll Finder pipeline.
 
 This script orchestrates the full B-roll generation workflow:
   1. Extract entities from an SRT transcript (via LLM)
-  2. Download images from Wikipedia for each entity
-  3. Generate FCP XML for import into DaVinci Resolve
+  2. Enrich entities with priority scores and transcript context
+  3. Generate LLM-powered Wikipedia search strategies
+  4. Download images from Wikipedia for each entity
+  5. Generate FCP XML for import into DaVinci Resolve
 
 Usage:
   # Full pipeline (most common)
@@ -13,8 +15,10 @@ Usage:
 
   # Individual steps
   python broll.py extract --srt video.srt --output entities_map.json
-  python broll.py download --map entities_map.json
-  python broll.py xml --map entities_map.json --output timeline.xml
+  python broll.py enrich --map entities_map.json --srt video.srt
+  python broll.py strategies --map enriched_entities.json
+  python broll.py download --map strategies_entities.json
+  python broll.py xml --map strategies_entities.json --output timeline.xml
 
 Config:
   Options can be set in broll_config.yaml or via CLI flags.
@@ -335,29 +339,30 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
 
 def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
-    """Run the full pipeline: extract -> enrich -> download -> xml."""
+    """Run the full pipeline: extract -> enrich -> strategies -> download -> xml."""
     # Validate required inputs
     if not args.srt:
         print("Error: --srt is required for pipeline command", file=sys.stderr)
         return 1
-    
+
     srt_path = Path(args.srt)
     if not srt_path.exists():
         print(f"Error: SRT file not found: {srt_path}", file=sys.stderr)
         return 1
-    
+
     # Set up output directory
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
         # Use SRT filename as output directory name
         output_dir = Path.cwd() / srt_path.stem
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Define intermediate file paths
     entities_path = output_dir / "entities_map.json"
     enriched_entities_path = output_dir / "enriched_entities.json"
+    strategies_entities_path = output_dir / "strategies_entities.json"
     xml_path = output_dir / "broll_timeline.xml"
     
     print(f"\n{'#'*60}")
@@ -396,9 +401,23 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         print("\nPipeline failed at: entity enrichment", file=sys.stderr)
         return result
 
-    # Step 3: Download images
-    download_args = argparse.Namespace(
+    # Step 3: Generate search strategies
+    strategies_args = argparse.Namespace(
         map=str(enriched_entities_path),
+        output=str(strategies_entities_path),
+        video_context=args.subject,  # Use --subject as video context
+        batch_size=getattr(args, 'batch_size', None),
+        cache_dir=getattr(args, 'cache_dir', None),
+    )
+
+    result = cmd_strategies(strategies_args, config)
+    if result != 0:
+        print("\nPipeline failed at: search strategy generation", file=sys.stderr)
+        return result
+
+    # Step 4: Download images
+    download_args = argparse.Namespace(
+        map=str(strategies_entities_path),
         images_per_entity=args.images_per_entity,
         delay=args.download_delay,
         parallel=args.parallel,
@@ -410,9 +429,9 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         print("\nPipeline failed at: image download", file=sys.stderr)
         return result
 
-    # Step 4: Generate XML
+    # Step 5: Generate XML
     xml_args = argparse.Namespace(
-        map=str(enriched_entities_path),
+        map=str(strategies_entities_path),
         output=str(xml_path),
         output_dir=None,
         fps=args.fps,
@@ -433,16 +452,17 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     print(f"# Pipeline Complete!")
     print(f"#")
     print(f"# Output files:")
-    print(f"#   - Entities:          {entities_path}")
-    print(f"#   - Enriched Entities: {enriched_entities_path}")
-    print(f"#   - XML:               {xml_path}")
+    print(f"#   - Entities:   {entities_path}")
+    print(f"#   - Enriched:   {enriched_entities_path}")
+    print(f"#   - Strategies: {strategies_entities_path}")
+    print(f"#   - XML:        {xml_path}")
     print(f"#")
     print(f"# Next steps:")
     print(f"#   1. Open DaVinci Resolve")
     print(f"#   2. File > Import > Timeline...")
     print(f"#   3. Select: {xml_path}")
     print(f"{'#'*60}")
-    
+
     return 0
 
 
@@ -530,7 +550,7 @@ Examples:
     # Pipeline command (full workflow)
     p_pipeline = subparsers.add_parser(
         "pipeline",
-        help="Run the full pipeline: extract -> download -> xml",
+        help="Run the full pipeline: extract -> enrich -> strategies -> download -> xml",
     )
     p_pipeline.add_argument("--srt", required=True, help="Path to SRT transcript")
     p_pipeline.add_argument("--output-dir", "-o", help="Output directory (default: SRT filename)")
@@ -546,9 +566,11 @@ Examples:
     p_pipeline.add_argument("--timeline-name", help="Name for the timeline")
     p_pipeline.add_argument("--extract-delay", type=float, default=0.2, help="Delay between LLM calls")
     p_pipeline.add_argument("--download-delay", type=float, default=0.1, help="Delay between download requests")
-    p_pipeline.add_argument("-j", "--parallel", type=int, default=4, 
+    p_pipeline.add_argument("-j", "--parallel", type=int, default=4,
                             help="Number of parallel downloads (default: 4)")
     p_pipeline.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
+    p_pipeline.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
+    p_pipeline.add_argument("--cache-dir", help="Wikipedia cache directory")
     
     # Extract command
     p_extract = subparsers.add_parser(
