@@ -10,28 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-25)
 ## Current Position
 
 Phase: 2 of 5 (Search Strategy Generation)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-01-26 — Phase 1 verified and complete
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-29 — Completed 02-01-PLAN.md
 
-Progress: [████░░░░░░] 20%
+Progress: [████░░░░░░] 27%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 8 min
-- Total execution time: 0.40 hours
+- Total plans completed: 4
+- Average duration: 7 min
+- Total execution time: 0.45 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 3/3 | 24 min | 8 min |
+| 2 | 1/3 | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-03 (8 min), 01-02 (7 min), 01-01 (9 min)
-- Trend: Stable at ~8 min/plan
+- Last 5 plans: 02-01 (3 min), 01-03 (8 min), 01-02 (7 min), 01-01 (9 min)
+- Trend: Improving (3-9 min range, average 7 min)
 
 *Updated after each plan completion*
 
@@ -54,6 +55,11 @@ Recent decisions affecting current work:
 - 01-03: Enrichment writes separate file (enriched_entities.json) preserving original
 - 01-03: Atomic write pattern (temp file + os.replace) for safe JSON output
 - 01-03: Dual import fallback for module/script execution contexts
+- 02-01: Claude structured outputs (beta) eliminate 10-30% retry attempts from malformed JSON
+- 02-01: Default batch size 7 entities per LLM call (research-backed balance)
+- 02-01: 7-day cache TTL for Wikipedia validation (balances freshness vs API load)
+- 02-01: Video context extracted from source_srt filename if not provided
+- 02-01: People entities get 3 queries, all others get 2 queries
 
 ### Pending Todos
 
@@ -65,6 +71,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-26T10:30:00Z
-Stopped at: Phase 1 complete, ready for Phase 2 planning
+Last session: 2026-01-29T13:53:07Z
+Stopped at: Completed 02-01-PLAN.md (LLM search strategy generation)
 Resume file: None
