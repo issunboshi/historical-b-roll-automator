@@ -99,8 +99,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PRIO-01 | Phase 1 | Complete |
 | PRIO-02 | Phase 1 | Complete |
 | PRIO-03 | Phase 1 | Complete |
-| PRIO-04 | Phase 3 | Pending |
-| PRIO-05 | Phase 3 | Pending |
+| PRIO-04 | Phase 3 | Complete |
+| PRIO-05 | Phase 3 | Complete |
 | VAR-01 | Phase 5 | Pending |
 | VAR-02 | Phase 5 | Pending |
 | VAR-03 | Phase 5 | Pending |
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-29 after Phase 2 completion*
+*Last updated: 2026-01-29 after Phase 3 completion*

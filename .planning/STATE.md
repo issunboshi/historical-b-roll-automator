@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-25)
 
 **Core value:** Reliably find the RIGHT image for each entity — the one that matches the story context — without requiring manual fixes.
-**Current focus:** Phase 3 - Priority-Based Filtering
+**Current focus:** Phase 4 - Disambiguation
 
 ## Current Position
 
-Phase: 3 of 5 (Priority-Based Filtering)
-Plan: 2/2 complete
-Status: Phase 3 complete
-Last activity: 2026-01-29 — Completed 03-02-PLAN.md (Priority filtering flags in broll.py CLI)
+Phase: 4 of 5 (Disambiguation)
+Plan: 0/TBD complete
+Status: Ready for planning
+Last activity: 2026-01-29 — Phase 3 complete (priority-based filtering verified)
 
-Progress: [████████░░] 53%
+Progress: [████████░░] 60%
 
 ## Performance Metrics
 
@@ -29,7 +29,7 @@ Progress: [████████░░] 53%
 |-------|-------|-------|----------|
 | 1 | 3/3 | 24 min | 8 min |
 | 2 | 3/3 | 11 min | 3.7 min |
-| 3 | 2/2 | 8 min | 4 min |
+| 3 | 2/2 ✓ | 8 min | 4 min |
 
 **Recent Trend:**
 - Last 5 plans: 03-02 (3 min), 03-01 (5 min), 02-02 (5 min), 02-03 (3 min), 02-01 (3 min)
@@ -84,7 +84,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-29T14:46:02Z
-Stopped at: Phase 3 complete — plan 03-02 executed, priority filtering fully integrated into CLI
+Last session: 2026-01-29T14:55:00Z
+Stopped at: Phase 3 verified complete — 2/2 plans, 4/4 must-haves verified
 Resume file: None
-Next: Phase 4 (Smart Image Selection) — context-aware image selection using disambiguation
+Next: Phase 4 (Disambiguation) — context-aware Wikipedia disambiguation with confidence scoring

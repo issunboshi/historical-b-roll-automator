@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Enrichment Foundation** - Add enrichment infrastructure and priority scoring (completed 2026-01-26)
 - [x] **Phase 2: Search Strategy Generation** - LLM-generated Wikipedia search queries (completed 2026-01-29)
-- [ ] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions
+- [x] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions (completed 2026-01-29)
 - [ ] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring
 - [ ] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering
 
@@ -65,8 +65,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [x] 03-01-PLAN.md — Add priority-based filtering to download stage with CLI flags, verbose logging, and skipped entity tracking
-- [ ] 03-02-PLAN.md — Expose filtering flags through broll.py pipeline and download commands (gap closure)
+- [x] 03-01-PLAN.md — Add priority-based filtering to download stage with CLI flags, verbose logging, and skipped entity tracking - completed 2026-01-29
+- [x] 03-02-PLAN.md — Expose filtering flags through broll.py pipeline and download commands (gap closure) - completed 2026-01-29
 
 ### Phase 4: Disambiguation
 **Goal**: When multiple Wikipedia articles match a search, LLM picks the contextually correct one with confidence scoring
@@ -111,6 +111,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
-| 3. Priority-Based Filtering | 1/2 | In Progress | - |
+| 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
 | 4. Disambiguation | 0/TBD | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
