@@ -305,6 +305,76 @@ def log_disambiguation_decision(
         print(f"  Rationale: {decision.rationale}", file=sys.stderr)
 
 
+def process_disambiguation_result(
+    decision: DisambiguationDecision,
+    entity_name: str,
+    entity_type: str,
+    candidates: List[CandidateInfo],
+    transcript_context: str,
+    video_topic: str,
+    review_entries: List[DisambiguationReviewEntry]
+) -> dict:
+    """Process disambiguation decision into entity metadata.
+
+    Returns dict with:
+    - wikipedia_title: Selected article or None
+    - disambiguation_source: How article was selected
+    - confidence: 0-10 score
+    - match_quality: high/medium/low/none
+    - rationale: LLM explanation
+    - candidates_considered: All evaluated titles
+    - action: download/flag_and_download/skip
+
+    Also appends to review_entries if flagged for review.
+
+    Args:
+        decision: DisambiguationDecision from LLM
+        entity_name: Original entity name
+        entity_type: Entity type (people, events, places, organizations, concepts)
+        candidates: List of CandidateInfo objects considered
+        transcript_context: Context from transcript
+        video_topic: Video topic for disambiguation
+        review_entries: List to append review entry to (modified in place)
+
+    Returns:
+        Dict with disambiguation metadata for entity
+
+    Example:
+        >>> review_entries = []
+        >>> metadata = process_disambiguation_result(
+        ...     decision, "Jordan", "people", candidates,
+        ...     "basketball player", "NBA", review_entries
+        ... )
+        >>> metadata["action"]
+        'download'
+    """
+    # Apply confidence routing
+    action, review_entry = apply_confidence_routing(
+        decision, entity_name, entity_type, candidates,
+        transcript_context, video_topic
+    )
+
+    # If flagged for review, add to review entries list
+    if review_entry is not None:
+        review_entries.append(review_entry)
+
+    # Log decision
+    log_disambiguation_decision(entity_name, decision, action)
+
+    # Build metadata dict
+    metadata = {
+        "wikipedia_title": decision.chosen_article if decision.chosen_article else None,
+        "disambiguation_source": "llm_disambiguation",
+        "confidence": decision.confidence,
+        "match_quality": decision.match_quality,
+        "rationale": decision.rationale,
+        "candidates_considered": decision.candidates_considered,
+        "action": action
+    }
+
+    return metadata
+
+
 # =============================================================================
 # Review and Override File Operations
 # =============================================================================
