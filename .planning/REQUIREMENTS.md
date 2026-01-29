@@ -9,9 +9,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Search Strategy
 
-- [ ] **SRCH-01**: LLM generates 2-3 Wikipedia search queries per entity based on name + transcript context
-- [ ] **SRCH-02**: Download stage iterates through search strategies in sequence until one returns results
-- [ ] **SRCH-03**: Record which search strategy succeeded for each entity in metadata
+- [x] **SRCH-01**: LLM generates 2-3 Wikipedia search queries per entity based on name + transcript context
+- [x] **SRCH-02**: Download stage iterates through search strategies in sequence until one returns results
+- [x] **SRCH-03**: Record which search strategy succeeded for each entity in metadata
 
 ### Disambiguation
 
@@ -86,9 +86,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SRCH-01 | Phase 2 | Pending |
-| SRCH-02 | Phase 2 | Pending |
-| SRCH-03 | Phase 2 | Pending |
+| SRCH-01 | Phase 2 | Complete |
+| SRCH-02 | Phase 2 | Complete |
+| SRCH-03 | Phase 2 | Complete |
 | DISAM-01 | Phase 4 | Pending |
 | DISAM-02 | Phase 4 | Pending |
 | DISAM-03 | Phase 4 | Pending |
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-26 after Phase 1 completion*
+*Last updated: 2026-01-29 after Phase 2 completion*

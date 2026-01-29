@@ -13,7 +13,7 @@ This roadmap transforms the existing Wikipedia image download pipeline from naiv
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Enrichment Foundation** - Add enrichment infrastructure and priority scoring (completed 2026-01-26)
-- [ ] **Phase 2: Search Strategy Generation** - LLM-generated Wikipedia search queries
+- [x] **Phase 2: Search Strategy Generation** - LLM-generated Wikipedia search queries (completed 2026-01-29)
 - [ ] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions
 - [ ] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring
 - [ ] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering
@@ -49,9 +49,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — LLM search strategy generator (Pydantic schemas, Claude structured outputs, Wikipedia validation, caching)
-- [ ] 02-02-PLAN.md — Download stage strategy iteration (try all strategies, pick best, record metadata)
-- [ ] 02-03-PLAN.md — Pipeline integration (strategies subcommand, 5-step pipeline)
+- [x] 02-01-PLAN.md — LLM search strategy generator (Pydantic schemas, Claude structured outputs, Wikipedia validation, caching) - completed 2026-01-29
+- [x] 02-02-PLAN.md — Download stage strategy iteration (try all strategies, pick best, record metadata) - completed 2026-01-29
+- [x] 02-03-PLAN.md — Pipeline integration (strategies subcommand, 5-step pipeline) - completed 2026-01-29
 
 ### Phase 3: Priority-Based Filtering
 **Goal**: Pipeline skips downloading images for low-value entities (places mentioned once, late-transcript mentions), reducing wasted API calls
@@ -109,7 +109,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
-| 2. Search Strategy Generation | 0/3 | Planned | - |
+| 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
 | 3. Priority-Based Filtering | 0/TBD | Not started | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
