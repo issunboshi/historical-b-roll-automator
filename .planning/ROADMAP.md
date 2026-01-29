@@ -54,18 +54,18 @@ Plans:
 - [x] 02-03-PLAN.md — Pipeline integration (strategies subcommand, 5-step pipeline) - completed 2026-01-29
 
 ### Phase 3: Priority-Based Filtering
-**Goal**: Pipeline skips downloading images for low-value entities (places mentioned once, late-transcript mentions), reducing wasted API calls
-**Depends on**: Phase 2
+**Goal**: Pipeline skips downloading images for low-value entities based on priority scores and entity-type rules, reducing wasted Wikipedia API calls
+**Depends on**: Phase 1 (uses priority scores from enrichment)
 **Requirements**: PRIO-04, PRIO-05
 **Success Criteria** (what must be TRUE):
   1. Entities below configurable priority threshold are skipped during download
   2. Places require minimum 2 mentions OR early mention (first 10%) to download
   3. Skipped entities are logged with reason for transparency
-  4. CLI flags --min-priority and --skip-places-threshold control filtering behavior
-**Plans**: TBD
+  4. CLI flag --min-priority controls filtering behavior (default 0.5, 0 disables)
+**Plans**: 1 plan
 
 Plans:
-- [ ] TBD during phase planning
+- [ ] 03-01-PLAN.md — Add priority-based filtering to download stage with CLI flags, verbose logging, and skipped entity tracking
 
 ### Phase 4: Disambiguation
 **Goal**: When multiple Wikipedia articles match a search, LLM picks the contextually correct one with confidence scoring
@@ -110,6 +110,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
-| 3. Priority-Based Filtering | 0/TBD | Not started | - |
+| 3. Priority-Based Filtering | 0/1 | Ready | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
