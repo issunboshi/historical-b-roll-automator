@@ -683,6 +683,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Track results: entity_name -> (success, entity_dir, matched_term, disambiguation_result)
     results: Dict[str, Tuple[bool, Path, Optional[str], Optional[dict]]] = {}
 
+    # Track elevated image count statistics
+    elevated_count = 0
+
     if workers == 1:
         # Sequential mode (original behavior, slightly optimized)
         for idx, (entity_name, payload) in enumerate(to_download, start=1):
@@ -694,6 +697,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 search_terms = get_search_terms(entity_name, payload)
             # Extract mention count from payload
             mention_count = len(payload.get("occurrences", []))
+            if mention_count >= 3:
+                elevated_count += 1
             name, success, entity_dir, matched_term, disambiguation_result = download_entity(
                 entity_name=entity_name,
                 entity_type=entity_type,
@@ -731,6 +736,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     search_terms = get_search_terms(entity_name, payload)
                 # Extract mention count from payload
                 mention_count = len(payload.get("occurrences", []))
+                if mention_count >= 3:
+                    elevated_count += 1
                 future = executor.submit(
                     download_entity,
                     entity_name=entity_name,
@@ -855,6 +862,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("Download Summary")
     print("=" * 60)
     print(f"  Downloaded: {success_count} entities")
+    print(f"  Elevated (5 images): {elevated_count} entities")
     print(f"  Skipped:    {len(skipped_entities)} entities")
     print(f"  Failed:     {fail_count} entities")
     print("=" * 60)
