@@ -99,10 +99,11 @@ Plans:
   3. Download stage fetches up to 5 images (instead of 3) for multi-mention entities
   4. Timeline generation has --min-match-quality flag to filter entities by match quality
   5. Entities below minimum match quality threshold excluded from timeline
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] TBD during phase planning
+- [ ] 05-01-PLAN.md — Dynamic image count for multi-mention entities (5 images for 3+ mentions)
+- [ ] 05-02-PLAN.md — Image rotation metadata tracking and quality-based timeline filtering
 
 ## Progress
 
@@ -115,4 +116,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
 | 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
 | 4. Disambiguation | 3/3 | Complete | 2026-01-29 |
-| 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
+| 5. Image Variety & Quality Filtering | 0/2 | In progress | - |
