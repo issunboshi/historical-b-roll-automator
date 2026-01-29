@@ -46,10 +46,12 @@ Plans:
   2. Download stage iterates through search strategies in sequence until one succeeds
   3. Metadata records which search strategy succeeded for each entity
   4. LLM-suggested Wikipedia titles are validated (exist check) before download attempts
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during phase planning
+- [ ] 02-01-PLAN.md — LLM search strategy generator (Pydantic schemas, Claude structured outputs, Wikipedia validation, caching)
+- [ ] 02-02-PLAN.md — Download stage strategy iteration (try all strategies, pick best, record metadata)
+- [ ] 02-03-PLAN.md — Pipeline integration (strategies subcommand, 5-step pipeline)
 
 ### Phase 3: Priority-Based Filtering
 **Goal**: Pipeline skips downloading images for low-value entities (places mentioned once, late-transcript mentions), reducing wasted API calls
@@ -74,7 +76,7 @@ Plans:
   2. When 2+ candidates exist, LLM compares summaries against transcript context
   3. Disambiguation pages are detected via categories/templates and resolved (not used directly)
   4. Each disambiguation decision has confidence score (0-10)
-  5. Results with confidence ≥7 are auto-accepted
+  5. Results with confidence >=7 are auto-accepted
   6. Results with confidence 4-6 are flagged as "needs review" in metadata
   7. Disambiguation depth limited to 3 attempts (prevents infinite loops)
   8. Match quality (high/medium/low/none) recorded for each entity
@@ -102,12 +104,12 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Enrichment Foundation | 3/3 | ✓ Complete | 2026-01-26 |
-| 2. Search Strategy Generation | 0/TBD | Not started | - |
+| 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
+| 2. Search Strategy Generation | 0/3 | Planned | - |
 | 3. Priority-Based Filtering | 0/TBD | Not started | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
