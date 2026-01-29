@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-25)
 ## Current Position
 
 Phase: 4 of 5 (Disambiguation)
-Plan: 0/TBD complete
-Status: Ready for planning
-Last activity: 2026-01-29 — Phase 3 complete (priority-based filtering verified)
+Plan: 1/TBD complete
+Status: In progress
+Last activity: 2026-01-29 — Completed 04-01-PLAN.md (core disambiguation module)
 
-Progress: [████████░░] 60%
+Progress: [████████░░] 65%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 5.1 min
-- Total execution time: 0.68 hours
+- Total plans completed: 9
+- Average duration: 4.9 min
+- Total execution time: 0.73 hours
 
 **By Phase:**
 
@@ -30,9 +30,10 @@ Progress: [████████░░] 60%
 | 1 | 3/3 | 24 min | 8 min |
 | 2 | 3/3 | 11 min | 3.7 min |
 | 3 | 2/2 ✓ | 8 min | 4 min |
+| 4 | 1/TBD | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (3 min), 03-01 (5 min), 02-02 (5 min), 02-03 (3 min), 02-01 (3 min)
+- Last 5 plans: 04-01 (3 min), 03-02 (3 min), 03-01 (5 min), 02-02 (5 min), 02-03 (3 min)
 - Trend: Excellent (consistent 3-5 min per plan)
 
 *Updated after each plan completion*
@@ -73,6 +74,12 @@ Recent decisions affecting current work:
 - 03-02: CLI flags pass through from broll.py to download_entities.py subprocess
 - 03-02: Both pipeline and download commands expose identical filtering flags
 - 03-02: Verbose flag uses -v short form for consistency with Unix conventions
+- 04-01: Disambiguation page property is empty string - check key existence not truthiness
+- 04-01: Max disambiguation depth of 3 attempts prevents infinite loops
+- 04-01: Confidence rubric in prompt provides reliable scoring without log probabilities
+- 04-01: Skip nested disambiguation pages during link extraction
+- 04-01: Single results get moderate confidence (7) not high confidence
+- 04-01: CLI works without ANTHROPIC_API_KEY for search-only testing
 
 ### Pending Todos
 
@@ -84,7 +91,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-29T14:55:00Z
-Stopped at: Phase 3 verified complete — 2/2 plans, 4/4 must-haves verified
+Last session: 2026-01-29T16:18:21Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
-Next: Phase 4 (Disambiguation) — context-aware Wikipedia disambiguation with confidence scoring
+Next: Continue Phase 4 (Disambiguation) — review workflow and download integration
