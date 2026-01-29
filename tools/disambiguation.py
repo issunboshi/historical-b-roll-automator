@@ -306,6 +306,154 @@ def log_disambiguation_decision(
 
 
 # =============================================================================
+# Review and Override File Operations
+# =============================================================================
+
+
+def write_review_file(
+    entries: List[DisambiguationReviewEntry],
+    output_path: Path
+) -> None:
+    """Write disambiguation review file for human oversight.
+
+    Only includes entities with confidence 4-6 (needs review).
+
+    Output format:
+    {
+        "generated": "ISO timestamp",
+        "instructions": "How to override...",
+        "entities": [
+            {
+                "entity_name": "...",
+                "entity_type": "...",
+                "candidates": [...],
+                "chosen_article": "...",
+                "confidence": N,
+                "rationale": "...",
+                "transcript_context": "...",
+                "video_topic": "...",
+                "match_quality": "..."
+            }
+        ]
+    }
+
+    Uses atomic write pattern (tempfile + os.replace) for safe output.
+    Sorts entities by confidence (lowest first for easier review).
+
+    Args:
+        entries: List of DisambiguationReviewEntry objects
+        output_path: Path to output review JSON file
+
+    Example:
+        >>> entries = [...]
+        >>> write_review_file(entries, Path("output/disambiguation_review.json"))
+    """
+    # Sort by confidence (lowest first for easier review)
+    sorted_entries = sorted(entries, key=lambda e: e.confidence)
+
+    review_data = {
+        "generated": datetime.utcnow().isoformat() + "Z",
+        "instructions": (
+            "Review entities below where disambiguation was uncertain (confidence 4-6). "
+            "To override a choice, add an entry to disambiguation_overrides.json with format: "
+            '{\"entity_name\": \"Correct_Wikipedia_Article_Title\"}'
+        ),
+        "entities": [entry.model_dump() for entry in sorted_entries]
+    }
+
+    # Atomic write pattern: write to temp file, then replace
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode='w',
+        dir=output_path.parent,
+        delete=False,
+        suffix='.tmp'
+    ) as tmp_file:
+        json.dump(review_data, tmp_file, indent=2)
+        tmp_name = tmp_file.name
+
+    # Atomic replace
+    os.replace(tmp_name, output_path)
+
+
+def load_overrides(override_path: Path) -> dict:
+    """Load manual disambiguation overrides.
+
+    Override file format: {"entity_name": "Wikipedia_Article_Title"}
+    Returns empty dict if file doesn't exist.
+
+    Ignores keys starting with underscore (for comments/examples).
+
+    Args:
+        override_path: Path to overrides JSON file
+
+    Returns:
+        Dict mapping entity names to Wikipedia article titles
+
+    Example:
+        >>> overrides = load_overrides(Path("output/disambiguation_overrides.json"))
+        >>> overrides.get("Jordan")
+        'Michael Jordan'
+    """
+    if not override_path.exists():
+        return {}
+
+    with open(override_path, 'r') as f:
+        data = json.load(f)
+
+    # Filter out comment/example keys (start with underscore)
+    return {k: v for k, v in data.items() if not k.startswith('_')}
+
+
+def get_override(
+    entity_name: str,
+    overrides: dict
+) -> Optional[str]:
+    """Check if entity has manual override.
+
+    Returns Wikipedia article title if override exists, None otherwise.
+    Overrides take precedence over LLM disambiguation.
+
+    Args:
+        entity_name: Entity name to check
+        overrides: Override dict from load_overrides()
+
+    Returns:
+        Wikipedia article title if override exists, None otherwise
+
+    Example:
+        >>> overrides = {"Jordan": "Michael Jordan"}
+        >>> get_override("Jordan", overrides)
+        'Michael Jordan'
+        >>> get_override("Einstein", overrides)
+        None
+    """
+    return overrides.get(entity_name)
+
+
+def create_override_entry(
+    entity_name: str,
+    wikipedia_title: str
+) -> dict:
+    """Create override entry for manual correction.
+
+    Returns dict suitable for adding to overrides file.
+
+    Args:
+        entity_name: Entity name to override
+        wikipedia_title: Correct Wikipedia article title
+
+    Returns:
+        Dict with single key-value pair for override
+
+    Example:
+        >>> create_override_entry("Jordan", "Michael Jordan")
+        {'Jordan': 'Michael Jordan'}
+    """
+    return {entity_name: wikipedia_title}
+
+
+# =============================================================================
 # Wikipedia API Functions
 # =============================================================================
 
