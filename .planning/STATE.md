@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-25)
 
 **Core value:** Reliably find the RIGHT image for each entity — the one that matches the story context — without requiring manual fixes.
-**Current focus:** Phase 2 - Search Strategy Generation
+**Current focus:** Phase 3 - Priority-Based Filtering
 
 ## Current Position
 
-Phase: 2 of 5 (Search Strategy Generation) ✓
-Plan: 3/3 complete
-Status: Phase 2 verified and complete
-Last activity: 2026-01-29 — Phase 2 execution complete, all must-haves verified
+Phase: 3 of 5 (Priority-Based Filtering)
+Plan: 1/1 complete
+Status: Phase 3 complete
+Last activity: 2026-01-29 — Completed 03-01-PLAN.md (Priority filtering at download stage)
 
-Progress: [██████░░░░] 40%
+Progress: [███████░░░] 47%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 5.5 min
-- Total execution time: 0.58 hours
+- Total plans completed: 7
+- Average duration: 5.4 min
+- Total execution time: 0.63 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [██████░░░░] 40%
 |-------|-------|-------|----------|
 | 1 | 3/3 | 24 min | 8 min |
 | 2 | 3/3 | 11 min | 3.7 min |
+| 3 | 1/1 | 5 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (5 min), 02-03 (3 min), 02-01 (3 min), 01-03 (8 min), 01-02 (7 min)
-- Trend: Excellent (Phase 2 averaging 3-5 min per plan)
+- Last 5 plans: 03-01 (5 min), 02-02 (5 min), 02-03 (3 min), 02-01 (3 min), 01-03 (8 min)
+- Trend: Excellent (consistent 3-5 min per plan)
 
 *Updated after each plan completion*
 
@@ -65,6 +66,10 @@ Recent decisions affecting current work:
 - 02-03: strategies step runs between enrich and download in pipeline sequence
 - 02-03: --subject arg forwarded as --video-context to strategies step
 - 02-03: strategies_entities.json replaces enriched_entities.json as input to download/XML
+- 03-01: Filter entities BEFORE parallel execution for thread safety
+- 03-01: Default min-priority threshold of 0.5 balances quality vs coverage
+- 03-01: Setting min-priority to 0.0 disables filtering completely
+- 03-01: Skipped entities tracked in output JSON with full metadata and reasons
 
 ### Pending Todos
 
@@ -76,7 +81,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-29T14:15:00Z
-Stopped at: Phase 2 complete — all 3 plans executed, goal verified
+Last session: 2026-01-29T14:25:17Z
+Stopped at: Phase 3 complete — plan 03-01 executed, priority filtering operational
 Resume file: None
-Next: Phase 3 (Priority-Based Filtering) — skip low-value entities to reduce wasted API calls
+Next: Phase 4 (Smart Image Selection) — context-aware image selection using disambiguation
