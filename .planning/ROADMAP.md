@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions (completed 2026-01-29)
 - [x] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring (completed 2026-01-29)
 - [x] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering (completed 2026-01-29)
-- [ ] **Phase 6: Quality Filtering CLI Integration** - Expose --min-match-quality through broll.py (gap closure)
+- [x] **Phase 6: Quality Filtering CLI Integration** - Expose --min-match-quality through broll.py (gap closure) (completed 2026-01-29)
 
 ## Phase Details
 
@@ -119,7 +119,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 06-01-PLAN.md — Wire --min-match-quality through broll.py pipeline and xml commands
+- [x] 06-01-PLAN.md — Wire --min-match-quality through broll.py pipeline and xml commands - completed 2026-01-29
 
 ## Progress
 
@@ -133,4 +133,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
 | 4. Disambiguation | 3/3 | Complete | 2026-01-29 |
 | 5. Image Variety & Quality Filtering | 2/2 | Complete | 2026-01-29 |
-| 6. Quality Filtering CLI Integration | 0/1 | Pending | — |
+| 6. Quality Filtering CLI Integration | 1/1 | Complete | 2026-01-29 |

@@ -109,7 +109,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-03 | Phase 4 | Complete |
 | QUAL-04 | Phase 4 | Complete |
 | QUAL-05 | Phase 4 | Complete |
-| QUAL-06 | Phase 5 | Complete |
+| QUAL-06 | Phase 5, Phase 6 | Complete |
 | QUAL-07 | Phase 4 | Complete |
 
 **Coverage:**
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-29 after Phase 5 completion — v1 milestone complete*
+*Last updated: 2026-01-29 after Phase 6 completion — v1 milestone fully complete including gap closure*

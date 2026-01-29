@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-01-25)
 
 **Core value:** Reliably find the RIGHT image for each entity — the one that matches the story context — without requiring manual fixes.
-**Current focus:** Phase 6 - Quality Filtering CLI Integration (gap closure)
+**Current focus:** v1 Milestone Complete - All phases executed and verified
 
 ## Current Position
 
