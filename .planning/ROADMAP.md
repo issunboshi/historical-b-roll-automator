@@ -62,10 +62,11 @@ Plans:
   2. Places require minimum 2 mentions OR early mention (first 10%) to download
   3. Skipped entities are logged with reason for transparency
   4. CLI flag --min-priority controls filtering behavior (default 0.5, 0 disables)
-**Plans**: 1 plan
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Add priority-based filtering to download stage with CLI flags, verbose logging, and skipped entity tracking
+- [x] 03-01-PLAN.md — Add priority-based filtering to download stage with CLI flags, verbose logging, and skipped entity tracking
+- [ ] 03-02-PLAN.md — Expose filtering flags through broll.py pipeline and download commands (gap closure)
 
 ### Phase 4: Disambiguation
 **Goal**: When multiple Wikipedia articles match a search, LLM picks the contextually correct one with confidence scoring
@@ -110,6 +111,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Enrichment Foundation | 3/3 | Complete | 2026-01-26 |
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
-| 3. Priority-Based Filtering | 0/1 | Ready | - |
+| 3. Priority-Based Filtering | 1/2 | In Progress | - |
 | 4. Disambiguation | 0/TBD | Not started | - |
 | 5. Image Variety & Quality Filtering | 0/TBD | Not started | - |
