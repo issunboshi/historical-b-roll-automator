@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import os
 import re
 import shutil
@@ -25,6 +26,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Import srt_time_to_seconds for position calculation (dual import fallback)
+try:
+    from tools.enrich_entities import srt_time_to_seconds
+except ImportError:
+    from enrich_entities import srt_time_to_seconds
 
 
 # Thread-safe print
@@ -44,6 +51,78 @@ def safe_folder_name(name: str) -> str:
     name = re.sub(r"\s+", " ", name)
     name = name.strip(" .")
     return name or "untitled"
+
+
+def should_skip_entity(
+    entity_name: str,
+    entity_data: Dict,
+    min_priority: float,
+    transcript_duration: float
+) -> Tuple[bool, str]:
+    """
+    Determine if an entity should be skipped based on priority rules.
+
+    Args:
+        entity_name: Name of the entity
+        entity_data: Entity payload with entity_type, priority, occurrences
+        min_priority: Minimum priority threshold (0.0 disables filtering)
+        transcript_duration: Total transcript duration in seconds
+
+    Returns:
+        Tuple of (should_skip: bool, skip_reason: str)
+        - (False, ""): Entity should be downloaded
+        - (True, reason): Entity should be skipped with explanation
+    """
+    # Guard: Filtering disabled
+    if min_priority <= 0.0:
+        return (False, "")
+
+    # Get entity attributes
+    entity_type = entity_data.get("entity_type", "").lower()
+    priority = entity_data.get("priority", 0.0)
+    occurrences = entity_data.get("occurrences", [])
+    mention_count = len(occurrences)
+
+    # Guard: People always download
+    if entity_type == "people":
+        return (False, "")
+
+    # Guard: Events always download
+    if entity_type == "events":
+        return (False, "")
+
+    # Places: Special rules for mention count and position
+    if entity_type == "places":
+        # Calculate first mention position
+        first_position_pct = 0.0
+        if occurrences and transcript_duration > 0:
+            first_timecode = occurrences[0].get("timecode", "00:00:00,000")
+            first_time_seconds = srt_time_to_seconds(first_timecode)
+            first_position_pct = first_time_seconds / transcript_duration
+
+        # Early mention override (first 10%)
+        if first_position_pct <= 0.1:
+            return (False, "")
+
+        # Multiple mentions override (2+)
+        if mention_count >= 2:
+            return (False, "")
+
+        # Single late mention - check priority
+        if priority < min_priority:
+            return (True, f"place with {mention_count} mention(s), not in first 10%")
+
+    # Concepts: Require >= 0.7 priority
+    if entity_type == "concepts":
+        if priority < 0.7:
+            return (True, f"concept priority {priority:.2f} < 0.70")
+
+    # Default: Check priority threshold
+    if priority < min_priority:
+        return (True, f"priority {priority:.2f} < {min_priority:.2f}")
+
+    # No skip reason - download this entity
+    return (False, "")
 
 
 def get_search_terms(entity_name: str, payload: Dict) -> List[str]:
@@ -338,17 +417,24 @@ def harvest_images(entity_dir: Path) -> List[Dict[str, str]]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Download images for entities and update entities_map.json")
+    parser = argparse.ArgumentParser(
+        description="Download images for entities and update entities_map.json",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("--map", required=True, help="Path to entities_map.json produced by srt_entities.py")
-    parser.add_argument("--images-per-entity", type=int, default=3, help="Max images per entity (default: 3)")
+    parser.add_argument("--images-per-entity", type=int, default=3, help="Max images per entity")
     parser.add_argument("--user-agent", type=str, default="b-roll-pipeline/0.1", help="HTTP User-Agent for downloader")
-    parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion (default: 3000)")
+    parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion")
     parser.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
-    parser.add_argument("--delay", type=float, default=0.1, help="Politeness delay between requests (seconds, default: 0.1)")
+    parser.add_argument("--delay", type=float, default=0.1, help="Politeness delay between requests (seconds)")
     parser.add_argument("-j", "--parallel", type=int, default=1,
-                        help="Number of parallel downloads (default: 1, recommended: 4)")
+                        help="Number of parallel downloads (recommended: 4)")
     parser.add_argument("--no-strategies", action="store_true",
                         help="Disable search strategy iteration (use only entity name for backward compatibility)")
+    parser.add_argument("--min-priority", type=float, default=0.5,
+                        help="Minimum priority threshold (0.0 disables filtering)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Show per-entity skip messages")
     args = parser.parse_args(argv)
 
     with open(args.map, "r", encoding="utf-8") as f:
