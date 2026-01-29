@@ -33,9 +33,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Image Variety
 
-- [ ] **VAR-01**: When entity has multiple good images and is mentioned multiple times, use different images at different mentions
-- [ ] **VAR-02**: Track which images used for which occurrences in metadata
-- [ ] **VAR-03**: Download extra images (up to 5 instead of 3) when entity has multiple mentions
+- [x] **VAR-01**: When entity has multiple good images and is mentioned multiple times, use different images at different mentions
+- [x] **VAR-02**: Track which images used for which occurrences in metadata
+- [x] **VAR-03**: Download extra images (up to 5 instead of 3) when entity has multiple mentions
 
 ### Quality Tracking
 
@@ -44,7 +44,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **QUAL-03**: Medium quality = successful disambiguation with moderate confidence (4-6) or fallback strategy
 - [x] **QUAL-04**: Low quality = all strategies failed but got some result
 - [x] **QUAL-05**: None = no Wikipedia results found
-- [ ] **QUAL-06**: Timeline generation filters entities by minimum match quality (configurable, default: medium)
+- [x] **QUAL-06**: Timeline generation filters entities by minimum match quality (configurable, default: medium)
 - [x] **QUAL-07**: Log all disambiguation decisions with candidates considered, chosen article, confidence, and rationale
 
 ## v2 Requirements
@@ -101,15 +101,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PRIO-03 | Phase 1 | Complete |
 | PRIO-04 | Phase 3 | Complete |
 | PRIO-05 | Phase 3 | Complete |
-| VAR-01 | Phase 5 | Pending |
-| VAR-02 | Phase 5 | Pending |
-| VAR-03 | Phase 5 | Pending |
+| VAR-01 | Phase 5 | Complete |
+| VAR-02 | Phase 5 | Complete |
+| VAR-03 | Phase 5 | Complete |
 | QUAL-01 | Phase 4 | Complete |
 | QUAL-02 | Phase 4 | Complete |
 | QUAL-03 | Phase 4 | Complete |
 | QUAL-04 | Phase 4 | Complete |
 | QUAL-05 | Phase 4 | Complete |
-| QUAL-06 | Phase 5 | Pending |
+| QUAL-06 | Phase 5 | Complete |
 | QUAL-07 | Phase 4 | Complete |
 
 **Coverage:**
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-29 after Phase 4 completion*
+*Last updated: 2026-01-29 after Phase 5 completion — v1 milestone complete*

@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Search Strategy Generation** - LLM-generated Wikipedia search queries (completed 2026-01-29)
 - [x] **Phase 3: Priority-Based Filtering** - Skip low-value entities based on type and mentions (completed 2026-01-29)
 - [x] **Phase 4: Disambiguation** - Context-aware Wikipedia disambiguation with confidence scoring (completed 2026-01-29)
-- [ ] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering
+- [x] **Phase 5: Image Variety & Quality Filtering** - Multi-image rotation and quality-based timeline filtering (completed 2026-01-29)
 
 ## Phase Details
 
@@ -102,8 +102,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Dynamic image count for multi-mention entities (5 images for 3+ mentions)
-- [ ] 05-02-PLAN.md — Image rotation metadata tracking and quality-based timeline filtering
+- [x] 05-01-PLAN.md — Dynamic image count for multi-mention entities (5 images for 3+ mentions) - completed 2026-01-29
+- [x] 05-02-PLAN.md — Image rotation metadata tracking and quality-based timeline filtering - completed 2026-01-29
 
 ## Progress
 
@@ -116,4 +116,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Search Strategy Generation | 3/3 | Complete | 2026-01-29 |
 | 3. Priority-Based Filtering | 2/2 | Complete | 2026-01-29 |
 | 4. Disambiguation | 3/3 | Complete | 2026-01-29 |
-| 5. Image Variety & Quality Filtering | 0/2 | In progress | - |
+| 5. Image Variety & Quality Filtering | 2/2 | Complete | 2026-01-29 |
