@@ -15,21 +15,21 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Disambiguation
 
-- [ ] **DISAM-01**: When Wikipedia search returns multiple results, fetch summaries for top 3 candidates
-- [ ] **DISAM-02**: LLM compares candidate summaries against transcript context and picks best match
-- [ ] **DISAM-03**: Detect disambiguation pages via categories/templates before attempting download
-- [ ] **DISAM-04**: Set maximum disambiguation depth (3 attempts) to prevent infinite loops
-- [ ] **DISAM-05**: Assign confidence score (0-10) to each disambiguation decision
-- [ ] **DISAM-06**: Auto-accept disambiguation results with confidence ≥7
-- [ ] **DISAM-07**: Flag results with confidence 4-6 as "needs review" in metadata
+- [x] **DISAM-01**: When Wikipedia search returns multiple results, fetch summaries for top 3 candidates
+- [x] **DISAM-02**: LLM compares candidate summaries against transcript context and picks best match
+- [x] **DISAM-03**: Detect disambiguation pages via categories/templates before attempting download
+- [x] **DISAM-04**: Set maximum disambiguation depth (3 attempts) to prevent infinite loops
+- [x] **DISAM-05**: Assign confidence score (0-10) to each disambiguation decision
+- [x] **DISAM-06**: Auto-accept disambiguation results with confidence ≥7
+- [x] **DISAM-07**: Flag results with confidence 4-6 as "needs review" in metadata
 
 ### Entity Prioritization
 
-- [ ] **PRIO-01**: Calculate priority score for each entity based on type (people=1.0, events=0.9, concepts=0.6, places=0.3)
-- [ ] **PRIO-02**: Boost priority for entities mentioned multiple times (diminishing returns: 1.3x at 2, 1.5x at 3, 1.6x at 4+)
-- [ ] **PRIO-03**: Boost priority for entities mentioned in first 20% of transcript (1.1x multiplier)
-- [ ] **PRIO-04**: Skip image download for entities below configurable priority threshold (default 0.3)
-- [ ] **PRIO-05**: For places, require minimum 2 mentions OR early mention (first 10%) to download
+- [x] **PRIO-01**: Calculate priority score for each entity based on type (people=1.0, events=0.9, concepts=0.6, places=0.3)
+- [x] **PRIO-02**: Boost priority for entities mentioned multiple times (diminishing returns: 1.3x at 2, 1.5x at 3, 1.6x at 4+)
+- [x] **PRIO-03**: Boost priority for entities mentioned in first 20% of transcript (1.1x multiplier)
+- [x] **PRIO-04**: Skip image download for entities below configurable priority threshold (default 0.3)
+- [x] **PRIO-05**: For places, require minimum 2 mentions OR early mention (first 10%) to download
 
 ### Image Variety
 
@@ -39,13 +39,13 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Quality Tracking
 
-- [ ] **QUAL-01**: Record match quality (high/medium/low/none) for each entity based on search and disambiguation results
-- [ ] **QUAL-02**: High quality = single result or confident disambiguation (≥7)
-- [ ] **QUAL-03**: Medium quality = successful disambiguation with moderate confidence (4-6) or fallback strategy
-- [ ] **QUAL-04**: Low quality = all strategies failed but got some result
-- [ ] **QUAL-05**: None = no Wikipedia results found
+- [x] **QUAL-01**: Record match quality (high/medium/low/none) for each entity based on search and disambiguation results
+- [x] **QUAL-02**: High quality = single result or confident disambiguation (≥7)
+- [x] **QUAL-03**: Medium quality = successful disambiguation with moderate confidence (4-6) or fallback strategy
+- [x] **QUAL-04**: Low quality = all strategies failed but got some result
+- [x] **QUAL-05**: None = no Wikipedia results found
 - [ ] **QUAL-06**: Timeline generation filters entities by minimum match quality (configurable, default: medium)
-- [ ] **QUAL-07**: Log all disambiguation decisions with candidates considered, chosen article, confidence, and rationale
+- [x] **QUAL-07**: Log all disambiguation decisions with candidates considered, chosen article, confidence, and rationale
 
 ## v2 Requirements
 
@@ -89,13 +89,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRCH-01 | Phase 2 | Complete |
 | SRCH-02 | Phase 2 | Complete |
 | SRCH-03 | Phase 2 | Complete |
-| DISAM-01 | Phase 4 | Pending |
-| DISAM-02 | Phase 4 | Pending |
-| DISAM-03 | Phase 4 | Pending |
-| DISAM-04 | Phase 4 | Pending |
-| DISAM-05 | Phase 4 | Pending |
-| DISAM-06 | Phase 4 | Pending |
-| DISAM-07 | Phase 4 | Pending |
+| DISAM-01 | Phase 4 | Complete |
+| DISAM-02 | Phase 4 | Complete |
+| DISAM-03 | Phase 4 | Complete |
+| DISAM-04 | Phase 4 | Complete |
+| DISAM-05 | Phase 4 | Complete |
+| DISAM-06 | Phase 4 | Complete |
+| DISAM-07 | Phase 4 | Complete |
 | PRIO-01 | Phase 1 | Complete |
 | PRIO-02 | Phase 1 | Complete |
 | PRIO-03 | Phase 1 | Complete |
@@ -104,13 +104,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VAR-01 | Phase 5 | Pending |
 | VAR-02 | Phase 5 | Pending |
 | VAR-03 | Phase 5 | Pending |
-| QUAL-01 | Phase 4 | Pending |
-| QUAL-02 | Phase 4 | Pending |
-| QUAL-03 | Phase 4 | Pending |
-| QUAL-04 | Phase 4 | Pending |
-| QUAL-05 | Phase 4 | Pending |
+| QUAL-01 | Phase 4 | Complete |
+| QUAL-02 | Phase 4 | Complete |
+| QUAL-03 | Phase 4 | Complete |
+| QUAL-04 | Phase 4 | Complete |
+| QUAL-05 | Phase 4 | Complete |
 | QUAL-06 | Phase 5 | Pending |
-| QUAL-07 | Phase 4 | Pending |
+| QUAL-07 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 24 total
@@ -119,4 +119,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-25*
-*Last updated: 2026-01-29 after Phase 3 completion*
+*Last updated: 2026-01-29 after Phase 4 completion*
