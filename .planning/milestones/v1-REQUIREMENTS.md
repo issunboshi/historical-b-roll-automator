@@ -1,3 +1,13 @@
+# Requirements Archive: v1 Wikipedia Image Improvements
+
+**Archived:** 2026-01-29
+**Status:** SHIPPED
+
+This is the archived requirements specification for v1.
+For current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).
+
+---
+
 # Requirements: B-Roll Automater - Wikipedia Image Improvements
 
 **Defined:** 2026-01-25
@@ -20,7 +30,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **DISAM-03**: Detect disambiguation pages via categories/templates before attempting download
 - [x] **DISAM-04**: Set maximum disambiguation depth (3 attempts) to prevent infinite loops
 - [x] **DISAM-05**: Assign confidence score (0-10) to each disambiguation decision
-- [x] **DISAM-06**: Auto-accept disambiguation results with confidence ≥7
+- [x] **DISAM-06**: Auto-accept disambiguation results with confidence >=7
 - [x] **DISAM-07**: Flag results with confidence 4-6 as "needs review" in metadata
 
 ### Entity Prioritization
@@ -40,49 +50,16 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Quality Tracking
 
 - [x] **QUAL-01**: Record match quality (high/medium/low/none) for each entity based on search and disambiguation results
-- [x] **QUAL-02**: High quality = single result or confident disambiguation (≥7)
+- [x] **QUAL-02**: High quality = single result or confident disambiguation (>=7)
 - [x] **QUAL-03**: Medium quality = successful disambiguation with moderate confidence (4-6) or fallback strategy
 - [x] **QUAL-04**: Low quality = all strategies failed but got some result
 - [x] **QUAL-05**: None = no Wikipedia results found
 - [x] **QUAL-06**: Timeline generation filters entities by minimum match quality (configurable, default: medium)
 - [x] **QUAL-07**: Log all disambiguation decisions with candidates considered, chosen article, confidence, and rationale
 
-## v2 Requirements
-
-Deferred to future milestone. Tracked but not in current roadmap.
-
-### Context Enhancement
-
-- **CTX-01**: Extract temporal context (year, decade, era) from transcript for query enhancement
-- **CTX-02**: Extract geographic context (location keywords, nearby place entities) for query enhancement
-- **CTX-03**: Use alias variations from entity extraction as fallback search strategies
-
-### Advanced Prioritization
-
-- **PRIO-06**: Entity-type-specific disambiguation strategies (people prefer biographies, places prefer main articles)
-- **PRIO-07**: Priority-based track assignment in timeline (high-priority entities on more visible tracks)
-
-### Caching
-
-- **CACHE-01**: Cache disambiguation results across runs (entity + context → Wikipedia article)
-- **CACHE-02**: Cache expiration after 30 days
-
-## Out of Scope
-
-Explicitly excluded. Documented to prevent scope creep.
-
-| Feature | Reason |
-|---------|--------|
-| Image quality analysis (resolution, composition) | Images shown small as PiP; fine details don't matter |
-| Manual image curation UI | CLI tool, not GUI application |
-| Non-Wikipedia image sources | Wikipedia provides licensing metadata; other sources complicate rights |
-| Wikidata integration | Adds complexity; defer unless Wikipedia-only approach shows <70% success |
-| Real-time processing | Batch processing sufficient for workflow |
-| Paid Wikipedia API access | No paid image search tiers exist; Wikimedia Enterprise is for dataset mirroring |
-
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Which phases covered which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -114,9 +91,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 **Coverage:**
 - v1 requirements: 24 total
-- Mapped to phases: 24
-- Unmapped: 0 ✓
+- Shipped: 24
+- Dropped: 0
 
 ---
-*Requirements defined: 2026-01-25*
-*Last updated: 2026-01-29 after Phase 6 completion — v1 milestone fully complete including gap closure*
+
+## Milestone Summary
+
+**Shipped:** 24 of 24 v1 requirements
+**Adjusted:** None
+**Dropped:** None
+
+---
+*Archived: 2026-01-29 as part of v1 milestone completion*
