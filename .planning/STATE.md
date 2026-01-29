@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-25)
 ## Current Position
 
 Phase: 3 of 5 (Priority-Based Filtering)
-Plan: 1/1 complete
+Plan: 2/2 complete
 Status: Phase 3 complete
-Last activity: 2026-01-29 — Completed 03-01-PLAN.md (Priority filtering at download stage)
+Last activity: 2026-01-29 — Completed 03-02-PLAN.md (Priority filtering flags in broll.py CLI)
 
-Progress: [███████░░░] 47%
+Progress: [████████░░] 53%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 5.4 min
-- Total execution time: 0.63 hours
+- Total plans completed: 8
+- Average duration: 5.1 min
+- Total execution time: 0.68 hours
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [███████░░░] 47%
 |-------|-------|-------|----------|
 | 1 | 3/3 | 24 min | 8 min |
 | 2 | 3/3 | 11 min | 3.7 min |
-| 3 | 1/1 | 5 min | 5 min |
+| 3 | 2/2 | 8 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-01 (5 min), 02-02 (5 min), 02-03 (3 min), 02-01 (3 min), 01-03 (8 min)
+- Last 5 plans: 03-02 (3 min), 03-01 (5 min), 02-02 (5 min), 02-03 (3 min), 02-01 (3 min)
 - Trend: Excellent (consistent 3-5 min per plan)
 
 *Updated after each plan completion*
@@ -70,6 +70,9 @@ Recent decisions affecting current work:
 - 03-01: Default min-priority threshold of 0.5 balances quality vs coverage
 - 03-01: Setting min-priority to 0.0 disables filtering completely
 - 03-01: Skipped entities tracked in output JSON with full metadata and reasons
+- 03-02: CLI flags pass through from broll.py to download_entities.py subprocess
+- 03-02: Both pipeline and download commands expose identical filtering flags
+- 03-02: Verbose flag uses -v short form for consistency with Unix conventions
 
 ### Pending Todos
 
@@ -81,7 +84,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-29T14:25:17Z
-Stopped at: Phase 3 complete — plan 03-01 executed, priority filtering operational
+Last session: 2026-01-29T14:46:02Z
+Stopped at: Phase 3 complete — plan 03-02 executed, priority filtering fully integrated into CLI
 Resume file: None
 Next: Phase 4 (Smart Image Selection) — context-aware image selection using disambiguation
