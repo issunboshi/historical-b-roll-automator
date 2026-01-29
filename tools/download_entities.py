@@ -27,16 +27,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import requests
+from anthropic import Anthropic
+from diskcache import Cache
+
 # Import srt_time_to_seconds for position calculation (dual import fallback)
 try:
     from tools.enrich_entities import srt_time_to_seconds
 except ImportError:
     from enrich_entities import srt_time_to_seconds
 
+# Disambiguation imports (dual fallback pattern)
+try:
+    from tools.disambiguation import (
+        search_wikipedia_candidates,
+        is_disambiguation_page,
+        fetch_candidate_info,
+        disambiguate_search_results,
+        load_overrides,
+        write_review_file,
+        process_disambiguation_result,
+        log_disambiguation_decision,
+        DisambiguationReviewEntry,
+    )
+except ImportError:
+    from disambiguation import (
+        search_wikipedia_candidates,
+        is_disambiguation_page,
+        fetch_candidate_info,
+        disambiguate_search_results,
+        load_overrides,
+        write_review_file,
+        process_disambiguation_result,
+        log_disambiguation_decision,
+        DisambiguationReviewEntry,
+    )
+
 
 # Thread-safe print and logging
 _print_lock = threading.Lock()
 logger = logging.getLogger(__name__)
+
+# Thread-safe storage for review entries
+_review_entries_lock = threading.Lock()
+_review_entries: List[DisambiguationReviewEntry] = []
 
 
 def safe_print(*args, **kwargs):
@@ -451,10 +485,31 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Minimum priority threshold (0.0 disables filtering)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show per-entity skip messages")
+    parser.add_argument("--no-disambiguation", action="store_true",
+                        help="Disable LLM disambiguation (use first search result)")
+    parser.add_argument("--overrides", type=str, default="output/disambiguation_overrides.json",
+                        help="Path to disambiguation overrides JSON file")
+    parser.add_argument("--review-file", type=str, default="output/disambiguation_review.json",
+                        help="Path to write disambiguation review file")
     args = parser.parse_args(argv)
 
     # Setup logging based on verbose flag
     setup_logging(args.verbose)
+
+    # Initialize disambiguation dependencies
+    disambiguation_client = None
+    disambiguation_cache = None
+    disambiguation_overrides = {}
+
+    if not args.no_disambiguation:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("Warning: ANTHROPIC_API_KEY not set, disambiguation disabled", file=sys.stderr)
+            args.no_disambiguation = True
+        else:
+            disambiguation_client = Anthropic(api_key=api_key)
+            disambiguation_cache = Cache("/tmp/wikipedia_cache")
+            disambiguation_overrides = load_overrides(Path(args.overrides))
 
     with open(args.map, "r", encoding="utf-8") as f:
         entities_map = json.load(f)
