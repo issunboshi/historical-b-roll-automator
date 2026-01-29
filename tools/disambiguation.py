@@ -55,7 +55,10 @@ import argparse
 import json
 import os
 import sys
-from typing import List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Tuple
+import tempfile
 
 import requests
 from anthropic import Anthropic
@@ -121,6 +124,185 @@ class DisambiguationDecision(BaseModel):
     candidates_considered: List[str] = Field(
         description="All candidate titles that were compared"
     )
+
+
+class DisambiguationReviewEntry(BaseModel):
+    """Entry for human review of uncertain disambiguation.
+
+    Includes all candidates considered, chosen article, confidence score,
+    and context to help human reviewers understand the decision.
+    """
+    entity_name: str = Field(
+        description="Original entity name from transcript"
+    )
+    entity_type: str = Field(
+        description="Entity type (people, events, places, organizations, concepts)"
+    )
+    candidates: List[dict] = Field(
+        description="All candidates with title, summary, categories"
+    )
+    chosen_article: str = Field(
+        description="Wikipedia article selected by LLM"
+    )
+    confidence: int = Field(
+        description="Confidence score 0-10",
+        ge=0,
+        le=10
+    )
+    rationale: str = Field(
+        description="LLM explanation of why this article was chosen"
+    )
+    transcript_context: str = Field(
+        description="Context from transcript where entity appears"
+    )
+    video_topic: str = Field(
+        description="Video topic for disambiguation context"
+    )
+    match_quality: str = Field(
+        description="Match quality: high/medium/low/none",
+        pattern="^(high|medium|low|none)$"
+    )
+
+
+# =============================================================================
+# Quality Tracking and Confidence Routing
+# =============================================================================
+
+
+def derive_match_quality(confidence: int, disambiguation_source: str = "") -> str:
+    """Derive match_quality from confidence score and source.
+
+    Per QUAL-01 through QUAL-05:
+    - high: confidence >= 7 (clear disambiguation or single result)
+    - medium: confidence 4-6 (successful with moderate confidence)
+    - low: confidence 1-3 (uncertain but got some result)
+    - none: confidence 0 (no match found)
+
+    Args:
+        confidence: Confidence score 0-10
+        disambiguation_source: Source of disambiguation (for context, not used in logic)
+
+    Returns:
+        Match quality string: "high", "medium", "low", or "none"
+
+    Example:
+        >>> derive_match_quality(8)
+        'high'
+        >>> derive_match_quality(5)
+        'medium'
+        >>> derive_match_quality(2)
+        'low'
+        >>> derive_match_quality(0)
+        'none'
+    """
+    if confidence >= 7:
+        return "high"
+    elif confidence >= 4:
+        return "medium"
+    elif confidence >= 1:
+        return "low"
+    else:
+        return "none"
+
+
+def apply_confidence_routing(
+    decision: DisambiguationDecision,
+    entity_name: str,
+    entity_type: str,
+    candidates: List[CandidateInfo],
+    transcript_context: str,
+    video_topic: str
+) -> Tuple[str, Optional[DisambiguationReviewEntry]]:
+    """Route entity based on disambiguation confidence.
+
+    Returns: (action, review_entry)
+    - action is one of: "download", "flag_and_download", "skip"
+    - review_entry is populated only for "flag_and_download"
+
+    Per CONTEXT.md decisions:
+    - Confidence 7+: auto-accept, proceed with download -> ("download", None)
+    - Confidence 4-6: flag as "needs review" but still use -> ("flag_and_download", entry)
+    - Confidence 0-3: skip entity, mark as "no match" -> ("skip", None)
+
+    Args:
+        decision: DisambiguationDecision from LLM
+        entity_name: Original entity name
+        entity_type: Entity type (people, events, places, organizations, concepts)
+        candidates: List of CandidateInfo objects considered
+        transcript_context: Context from transcript
+        video_topic: Video topic for disambiguation
+
+    Returns:
+        Tuple of (action, review_entry or None)
+
+    Example:
+        >>> decision = DisambiguationDecision(...)
+        >>> action, entry = apply_confidence_routing(decision, "Jordan", "people", [...], "basketball", "NBA")
+        >>> action
+        'download'
+    """
+    if decision.confidence >= 7:
+        # High confidence - auto-accept
+        return ("download", None)
+
+    elif decision.confidence >= 4:
+        # Medium confidence - flag for review but still use
+        review_entry = DisambiguationReviewEntry(
+            entity_name=entity_name,
+            entity_type=entity_type,
+            candidates=[
+                {
+                    "title": c.title,
+                    "summary": c.summary,
+                    "categories": c.categories
+                }
+                for c in candidates
+            ],
+            chosen_article=decision.chosen_article,
+            confidence=decision.confidence,
+            rationale=decision.rationale,
+            transcript_context=transcript_context,
+            video_topic=video_topic,
+            match_quality=decision.match_quality
+        )
+        return ("flag_and_download", review_entry)
+
+    else:
+        # Low confidence or no match - skip
+        return ("skip", None)
+
+
+def log_disambiguation_decision(
+    entity_name: str,
+    decision: DisambiguationDecision,
+    action: str
+) -> None:
+    """Log disambiguation decision per QUAL-07.
+
+    Logs: entity name, candidates considered, chosen article,
+    confidence score, rationale, action taken.
+
+    Args:
+        entity_name: Entity being disambiguated
+        decision: DisambiguationDecision from LLM
+        action: Action taken (download, flag_and_download, skip)
+
+    Example:
+        >>> log_disambiguation_decision("Jordan", decision, "download")
+        [Disambiguation] Jordan -> Michael Jordan (confidence: 9, action: download)
+    """
+    print(
+        f"[Disambiguation] {entity_name} -> {decision.chosen_article or 'NO MATCH'} "
+        f"(confidence: {decision.confidence}, quality: {decision.match_quality}, action: {action})",
+        file=sys.stderr
+    )
+    if decision.candidates_considered:
+        print(
+            f"  Candidates: {', '.join(decision.candidates_considered)}",
+            file=sys.stderr
+        )
+    if decision.rationale:
+        print(f"  Rationale: {decision.rationale}", file=sys.stderr)
 
 
 # =============================================================================
