@@ -444,8 +444,12 @@ After generating the XML:
             'duration_frames': duration_frames,
         })
         track_end[chosen_track] = clip_end
-        
-        print(f"  V{chosen_track}: {clip['name']} at {frames_to_timecode(clip_start, args.fps)}")
+
+        # Show image rotation info
+        img_idx = clip.get('image_index', 0)
+        total_imgs = clip.get('total_images', 1)
+        rotation_note = f" [image {img_idx + 1}/{total_imgs}]" if total_imgs > 1 else ""
+        print(f"  V{chosen_track}: {clip['name']}{rotation_note} at {frames_to_timecode(clip_start, args.fps)}")
 
     print(f"\nPlacing {len(placements)} clips, skipped {skipped}")
 
@@ -455,7 +459,13 @@ After generating the XML:
         if clip.get('total_images', 1) > 1:
             entities_with_rotation.add(clip.get('entity'))
 
-    print(f"Entities using image rotation: {len(entities_with_rotation)}")
+    # Calculate multi-image entities stats
+    multi_image_entities = sum(1 for e in qualified_entities.values()
+                               if len(e.get('images', [])) > 1 and len(e.get('occurrences', [])) > 1)
+
+    print(f"\nImage variety:")
+    print(f"  Multi-image entities: {multi_image_entities}")
+    print(f"  Using rotation: {len(entities_with_rotation)}")
 
     # Log excluded entities
     if excluded_entities:
