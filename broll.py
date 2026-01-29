@@ -491,10 +491,11 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     print()
     print("Scripts:")
-    
+
     scripts = [
         ("srt_entities.py", "Entity extraction"),
         ("enrich_entities.py", "Entity enrichment"),
+        ("generate_search_strategies.py", "Search strategy generation"),
         ("download_entities.py", "Image download"),
         ("generate_broll_xml.py", "XML generation"),
         ("wikipedia_image_downloader.py", "Wikipedia downloader"),
@@ -513,7 +514,12 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         print("  [OK] OPENAI_API_KEY is set")
     else:
         print("  [WARN] OPENAI_API_KEY not set (required for OpenAI provider)")
-    
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        print("  [OK] ANTHROPIC_API_KEY is set")
+    else:
+        print("  [WARN] ANTHROPIC_API_KEY not set (required for search strategies)")
+
     return 0
 
 
