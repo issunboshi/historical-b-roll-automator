@@ -298,6 +298,7 @@ def download_entity(
     current_idx: int,
     search_terms: List[str],
     payload: Dict,
+    mention_count: int = 1,
     # New disambiguation parameters
     use_disambiguation: bool = True,
     disambiguation_client: Optional[Anthropic] = None,
@@ -317,6 +318,12 @@ def download_entity(
     """
     entity_dir = out_dir / safe_folder_name(entity_name)
     disambiguation_result = None
+
+    # Calculate effective image count based on mention frequency
+    effective_images = images_per_entity
+    if mention_count >= 3:
+        effective_images = min(5, max(images_per_entity, 5))
+        safe_print(f"[{current_idx}/{total_entities}]   Multi-mention entity ({mention_count}x): downloading {effective_images} images")
 
     # Check for manual override first
     if disambiguation_overrides and entity_name in disambiguation_overrides:
@@ -416,7 +423,7 @@ def download_entity(
                 str(downloader),
                 search_term,
                 "--limit",
-                str(images_per_entity),
+                str(effective_images),
                 "--user-agent",
                 user_agent,
                 "--png-width",
@@ -685,6 +692,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 search_terms = [entity_name]
             else:
                 search_terms = get_search_terms(entity_name, payload)
+            # Extract mention count from payload
+            mention_count = len(payload.get("occurrences", []))
             name, success, entity_dir, matched_term, disambiguation_result = download_entity(
                 entity_name=entity_name,
                 entity_type=entity_type,
@@ -700,6 +709,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 current_idx=idx,
                 search_terms=search_terms,
                 payload=payload,
+                mention_count=mention_count,
                 use_disambiguation=not args.no_disambiguation,
                 disambiguation_client=disambiguation_client,
                 disambiguation_cache=disambiguation_cache,
@@ -719,6 +729,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     search_terms = [entity_name]
                 else:
                     search_terms = get_search_terms(entity_name, payload)
+                # Extract mention count from payload
+                mention_count = len(payload.get("occurrences", []))
                 future = executor.submit(
                     download_entity,
                     entity_name=entity_name,
@@ -735,6 +747,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     current_idx=idx,
                     search_terms=search_terms,
                     payload=payload,
+                    mention_count=mention_count,
                     use_disambiguation=not args.no_disambiguation,
                     disambiguation_client=disambiguation_client,
                     disambiguation_cache=disambiguation_cache,
