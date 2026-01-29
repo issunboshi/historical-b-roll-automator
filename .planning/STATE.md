@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-25)
 ## Current Position
 
 Phase: 5 of 5 (Image Variety & Quality Filtering)
-Plan: 1/TBD complete
+Plan: 2/TBD complete
 Status: In progress
-Last activity: 2026-01-29 — Completed 05-01-PLAN.md
+Last activity: 2026-01-29 — Completed 05-02-PLAN.md
 
-Progress: [████████░░] 82%
+Progress: [████████░░] 84%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 4.2 min
-- Total execution time: 0.87 hours
+- Total plans completed: 13
+- Average duration: 4.0 min
+- Total execution time: 0.90 hours
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [████████░░] 82%
 | 2 | 3/3 | 11 min | 3.7 min |
 | 3 | 2/2 ✓ | 8 min | 4 min |
 | 4 | 3/3 ✓ | 9 min | 3 min |
-| 5 | 1/TBD | 2 min | 2 min |
+| 5 | 2/TBD | 4 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-01 (2 min), 04-03 (3 min), 04-02 (3 min), 04-01 (3 min), 03-02 (3 min)
-- Trend: Excellent (consistently under 3 min per plan)
+- Last 5 plans: 05-02 (2 min), 05-01 (2 min), 04-03 (3 min), 04-02 (3 min), 04-01 (3 min)
+- Trend: Excellent (consistently 2-3 min per plan)
 
 *Updated after each plan completion*
 
@@ -95,6 +95,10 @@ Recent decisions affecting current work:
 - 05-01: 5 images for entities with 3+ mentions provides adequate variety
 - 05-01: Threshold of 3 mentions balances download volume with variety needs
 - 05-01: Elevated count message shows regardless of verbose flag (actionable information)
+- 05-02: Default quality threshold: high (only high-quality matches included in timeline)
+- 05-02: Excluded entities logged to both console and .excluded.json for review
+- 05-02: Image rotation tracked in clip metadata for verification
+- 05-02: Rotation stats displayed in console output for transparency
 
 ### Pending Todos
 
@@ -106,7 +110,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-29T17:07:23Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-01-29T17:08:28Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
-Next: Continue Phase 5 (Image Variety & Quality Filtering) — quality filtering and timeline rotation
+Next: Continue Phase 5 (Image Variety & Quality Filtering) — final integration
