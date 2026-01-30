@@ -84,3 +84,4 @@ venv.bak/
 
 # Project output files
 output/
+/.wikipedia_image_downloader.ini
