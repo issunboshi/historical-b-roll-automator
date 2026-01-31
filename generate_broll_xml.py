@@ -43,21 +43,22 @@ QUALITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 
 def path_to_file_url(filepath: str) -> str:
     """
-    Convert a filesystem path to a proper file:// URL.
-    
-    Handles filenames that contain URL-encoded characters (like %2C for comma).
-    These need to be re-encoded so %2C becomes %252C in the URL.
+    Convert a filesystem path to a proper file:// URL for DaVinci Resolve.
+
+    Uses file:/// format (no localhost) which has better compatibility with
+    DaVinci Resolve on macOS. Also handles URL-encoded characters in filenames.
     """
     # Split into directory and filename
     dirname = os.path.dirname(filepath)
     basename = os.path.basename(filepath)
-    
+
     # URL-encode the path components (quote encodes special chars including %)
     # safe='/' keeps forward slashes unencoded in the directory path
     encoded_dir = quote(dirname, safe='/')
     encoded_name = quote(basename, safe='')
-    
-    return f"file://localhost{encoded_dir}/{encoded_name}"
+
+    # Use file:/// (no localhost) for better DaVinci Resolve compatibility
+    return f"file://{encoded_dir}/{encoded_name}"
 
 
 def srt_timecode_to_seconds(tc: str) -> float:
@@ -122,36 +123,47 @@ def create_fcp_xml(placements: list, fps: float, timeline_name: str, clip_durati
     
     # Collect unique files and create master clips in the bin
     # Use path as key to avoid duplicates
-    file_registry = {}  # path -> file_id
+    file_registry = {}  # path -> {'masterclip_id': ..., 'file_id': ...}
     for p in placements:
         path = p['path']
         if path not in file_registry:
-            file_id = f"masterclip-{generate_id()}"
-            file_registry[path] = file_id
-            
+            masterclip_id = f"masterclip-{generate_id()}"
+            file_id = f"file-{generate_id()}"
+            file_registry[path] = {'masterclip_id': masterclip_id, 'file_id': file_id}
+
             # Create clip element in bin
-            clip = ET.SubElement(bin_children, 'clip', id=file_id)
+            clip = ET.SubElement(bin_children, 'clip', id=masterclip_id)
             ET.SubElement(clip, 'name').text = os.path.basename(path)
             ET.SubElement(clip, 'duration').text = str(p['duration_frames'])
-            
+
             # Rate
             clip_rate = ET.SubElement(clip, 'rate')
             ET.SubElement(clip_rate, 'timebase').text = str(fps_int)
             ET.SubElement(clip_rate, 'ntsc').text = 'FALSE'
-            
-            # File reference
-            file_elem = ET.SubElement(clip, 'file', id=f"file-{generate_id()}")
+
+            # File reference (reuse file_id for same media)
+            file_elem = ET.SubElement(clip, 'file', id=file_id)
             ET.SubElement(file_elem, 'name').text = os.path.basename(path)
             ET.SubElement(file_elem, 'pathurl').text = path_to_file_url(path)
-            ET.SubElement(file_elem, 'duration').text = str(p['duration_frames'])
-            
+            # Still images have duration=1 (single frame)
+            ET.SubElement(file_elem, 'duration').text = '1'
+
             f_rate = ET.SubElement(file_elem, 'rate')
             ET.SubElement(f_rate, 'timebase').text = str(fps_int)
             ET.SubElement(f_rate, 'ntsc').text = 'FALSE'
-            
+
+            # Timecode (required by DaVinci for proper media recognition)
+            f_tc = ET.SubElement(file_elem, 'timecode')
+            ET.SubElement(f_tc, 'string').text = '00:00:00:00'
+            ET.SubElement(f_tc, 'displayformat').text = 'NDF'
+            f_tc_rate = ET.SubElement(f_tc, 'rate')
+            ET.SubElement(f_tc_rate, 'timebase').text = str(fps_int)
+            ET.SubElement(f_tc_rate, 'ntsc').text = 'FALSE'
+
             # Media info
             f_media = ET.SubElement(file_elem, 'media')
             f_video = ET.SubElement(f_media, 'video')
+            ET.SubElement(f_video, 'duration').text = '1'
             f_sample = ET.SubElement(f_video, 'samplecharacteristics')
             ET.SubElement(f_sample, 'width').text = '1920'
             ET.SubElement(f_sample, 'height').text = '1080'
@@ -215,48 +227,59 @@ def create_fcp_xml(placements: list, fps: float, timeline_name: str, clip_durati
         
         for p in track_placements:
             clipitem = ET.SubElement(track, 'clipitem', id=f"clipitem-{generate_id()}")
-            
+
             # Reference the masterclip from the bin
-            masterclip_id = file_registry.get(p['path'])
-            if masterclip_id:
-                ET.SubElement(clipitem, 'masterclipid').text = masterclip_id
-            
+            file_info = file_registry.get(p['path'])
+            if file_info:
+                ET.SubElement(clipitem, 'masterclipid').text = file_info['masterclip_id']
+
             # Clip name
             clip_name = p.get('name', os.path.basename(p['path']))
             ET.SubElement(clipitem, 'name').text = clip_name
-            
-            # Duration (clip duration)
+
+            # Duration (clip duration on timeline)
             ET.SubElement(clipitem, 'duration').text = str(p['duration_frames'])
-            
+
             # Rate
             ci_rate = ET.SubElement(clipitem, 'rate')
             ET.SubElement(ci_rate, 'timebase').text = str(fps_int)
             ET.SubElement(ci_rate, 'ntsc').text = 'FALSE'
-            
+
             # Timeline position (in/out points on timeline)
             ET.SubElement(clipitem, 'start').text = str(p['frame'])
             ET.SubElement(clipitem, 'end').text = str(p['frame'] + p['duration_frames'])
-            
+
             # Source in/out (portion of source clip to use)
             ET.SubElement(clipitem, 'in').text = '0'
             ET.SubElement(clipitem, 'out').text = str(p['duration_frames'])
-            
-            # File reference (still needed for Resolve to find the media)
-            file_elem = ET.SubElement(clipitem, 'file', id=f"file-{generate_id()}")
+
+            # File reference - reuse the same file ID from the bin
+            # This allows DaVinci to recognize it as the same media
+            file_id = file_info['file_id'] if file_info else f"file-{generate_id()}"
+            file_elem = ET.SubElement(clipitem, 'file', id=file_id)
             ET.SubElement(file_elem, 'name').text = os.path.basename(p['path'])
             ET.SubElement(file_elem, 'pathurl').text = path_to_file_url(p['path'])
-            
+
+            # Still images have duration=1 (single frame)
+            ET.SubElement(file_elem, 'duration').text = '1'
+
             # File rate
             f_rate = ET.SubElement(file_elem, 'rate')
             ET.SubElement(f_rate, 'timebase').text = str(fps_int)
             ET.SubElement(f_rate, 'ntsc').text = 'FALSE'
-            
-            # File duration (for stills, use clip duration)
-            ET.SubElement(file_elem, 'duration').text = str(p['duration_frames'])
-            
+
+            # Timecode (required by DaVinci for proper media recognition)
+            f_tc = ET.SubElement(file_elem, 'timecode')
+            ET.SubElement(f_tc, 'string').text = '00:00:00:00'
+            ET.SubElement(f_tc, 'displayformat').text = 'NDF'
+            f_tc_rate = ET.SubElement(f_tc, 'rate')
+            ET.SubElement(f_tc_rate, 'timebase').text = str(fps_int)
+            ET.SubElement(f_tc_rate, 'ntsc').text = 'FALSE'
+
             # Media info
             f_media = ET.SubElement(file_elem, 'media')
             f_video = ET.SubElement(f_media, 'video')
+            ET.SubElement(f_video, 'duration').text = '1'
             f_sample = ET.SubElement(f_video, 'samplecharacteristics')
             ET.SubElement(f_sample, 'width').text = '1920'
             ET.SubElement(f_sample, 'height').text = '1080'
