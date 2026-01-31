@@ -61,10 +61,10 @@ python broll.py pipeline --srt video.srt [options]
 
 **Required:**
 - `--srt PATH` — Path to SRT transcript
+- `--output-dir PATH` — Output directory for all pipeline files (images, JSON, XML)
 
 **Common options:**
 - `--subject TEXT` — Topic/context for better disambiguation (recommended)
-- `--output-dir PATH` — Output directory (default: SRT filename)
 - `--fps N` — Timeline frame rate (default: from config or 24)
 - `--min-priority N` — Skip entities below this priority (default: 0.5, 0 disables)
 - `--min-match-quality {high,medium,low,none}` — Timeline quality filter (default: high)
@@ -78,6 +78,21 @@ python broll.py pipeline --srt video.srt [options]
 - `--gap N` — Minimum gap between clips
 - `--tracks N` — Number of b-roll tracks
 - `--allow-non-pd` — Include non-public-domain images
+- `--timeline-name TEXT` — Custom name for the timeline
+
+**Rate limiting:**
+- `--extract-delay SECONDS` — Delay between LLM API calls (default: 0.2)
+- `--download-delay SECONDS` — Delay between Wikipedia requests (default: 0.1)
+
+**LLM options:**
+- `--provider {openai,ollama}` — LLM provider for extraction
+- `--model NAME` — LLM model name
+
+**Processing options:**
+- `--no-svg-to-png` — Disable SVG to PNG conversion
+- `--cache-dir PATH` — Wikipedia validation cache directory
+- `--resume` — Resume from last completed step
+- `--from-step {extract,enrich,strategies,download,xml}` — Start from specific step
 
 ### Individual Steps
 
@@ -99,6 +114,50 @@ python broll.py download --map strategies_entities.json --min-priority 0.5 -v
 # 5. Generate timeline XML
 python broll.py xml --map strategies_entities.json --min-match-quality high
 ```
+
+#### Extract options
+- `--srt PATH` — Path to SRT transcript (required)
+- `--output, -o PATH` — Output JSON path
+- `--output-dir PATH` — Output directory (creates entities_map.json inside)
+- `--fps N` — FPS for timecode conversion
+- `--subject TEXT` — Transcript subject for entity context
+- `--provider {openai,ollama}` — LLM provider
+- `--model NAME` — LLM model name
+- `--delay SECONDS` — Delay between LLM calls
+
+#### Enrich options
+- `--map PATH` — Path to entities_map.json (required)
+- `--srt PATH` — Path to original SRT file (required)
+- `--output, -o PATH` — Output JSON path (default: enriched_entities.json)
+
+#### Strategies options
+- `--map PATH` — Path to enriched_entities.json (required)
+- `--output, -o PATH` — Output JSON path
+- `--video-context TEXT` — Video topic/title for disambiguation
+- `--batch-size N` — Entities per LLM call (5-10)
+- `--cache-dir PATH` — Wikipedia validation cache directory
+
+#### Download options
+- `--map PATH` — Path to entities_map.json (required)
+- `--output-dir, -o PATH` — Output directory for downloaded images
+- `--images-per-entity N` — Max images per entity
+- `--delay SECONDS` — Delay between requests (default: 0.1)
+- `-j, --parallel N` — Parallel download threads (default: 4)
+- `--no-svg-to-png` — Disable SVG to PNG conversion
+- `--min-priority N` — Skip entities below this priority
+- `-v, --verbose` — Show per-entity details
+
+#### XML options
+- `--map PATH` — Path to entities_map.json (required)
+- `--output, -o PATH` — Output XML path
+- `--output-dir PATH` — Output directory
+- `--fps N` — Timeline frame rate
+- `--duration, -d N` — Clip duration in seconds
+- `--gap, -g N` — Min gap between clips
+- `--tracks, -t N` — Number of B-roll tracks
+- `--allow-non-pd` — Include non-public-domain images
+- `--timeline-name TEXT` — Name for the timeline
+- `--min-match-quality {high,medium,low,none}` — Quality filter
 
 ### Check Status
 
@@ -185,6 +244,11 @@ video/
 3. Select `broll_timeline.xml`
 4. Images are referenced by path; ensure the images folder is accessible
 
+The generated FCP 7 XML uses DaVinci-compatible file references:
+- Still images use `duration=1` (single frame) matching DaVinci's expectation
+- File elements include `<timecode>` blocks for proper media recognition
+- Consistent file IDs across bin and timeline for automatic media linking
+
 ---
 
 ## Configuration
@@ -253,6 +317,11 @@ output_dir = /Users/you/Downloads/WikiImages
 - `--delay SECONDS` — Politeness delay (default: 0.3)
 - `--max-retries N` — HTTP retries on 429/5xx (default: 5)
 - `--retry-backoff SECONDS` — Exponential backoff base (default: 1.0)
+
+### Image Ordering
+
+- `--prefer-recent` — Prioritize newer images first when year can be inferred
+- `--no-historical-priority` — Disable older-first reordering; keep source order
 
 ---
 
