@@ -4,6 +4,8 @@ disambiguation.py
 
 Wikipedia disambiguation module for B-roll automation.
 
+NOTE: API keys are auto-loaded from .wikipedia_image_downloader.ini via config module.
+
 This module provides intelligent disambiguation when Wikipedia searches return
 multiple potential matches. Uses Claude structured outputs to select the
 contextually correct article based on transcript context, with confidence
@@ -59,6 +61,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 import tempfile
+
+# Auto-load API keys from config file
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config  # noqa: F401
 
 import requests
 from anthropic import Anthropic

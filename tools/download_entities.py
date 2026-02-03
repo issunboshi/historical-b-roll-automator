@@ -27,6 +27,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# Auto-load API keys from config file
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config  # noqa: F401
+
 import requests
 from anthropic import Anthropic
 from diskcache import Cache
@@ -325,8 +329,24 @@ def download_entity(
         effective_images = min(5, max(images_per_entity, 5))
         safe_print(f"[{current_idx}/{total_entities}]   Multi-mention entity ({mention_count}x): downloading {effective_images} images")
 
-    # Check for manual override first
-    if disambiguation_overrides and entity_name in disambiguation_overrides:
+    # Check for pre-computed disambiguation (from disambiguate_entities.py step)
+    precomputed_disambig = payload.get("disambiguation")
+    if precomputed_disambig and precomputed_disambig.get("wikipedia_title"):
+        # Use pre-computed disambiguation result
+        wiki_title = precomputed_disambig["wikipedia_title"]
+        action = precomputed_disambig.get("action", "download")
+
+        if action == "skip":
+            safe_print(f"[{current_idx}/{total_entities}] Skipping {entity_name}: pre-computed skip")
+            return (entity_name, False, out_dir / safe_folder_name(entity_name), None, precomputed_disambig)
+
+        # Use pre-computed Wikipedia title as primary search term
+        search_terms = [wiki_title] + search_terms
+        disambiguation_result = precomputed_disambig
+        safe_print(f"[{current_idx}/{total_entities}] Using pre-computed: {entity_name} -> {wiki_title}")
+
+    # Check for manual override
+    elif disambiguation_overrides and entity_name in disambiguation_overrides:
         override_title = disambiguation_overrides[entity_name]
         safe_print(f"[{current_idx}/{total_entities}] Using override for {entity_name}: {override_title}")
         search_terms = [override_title]
@@ -337,7 +357,7 @@ def download_entity(
             "wikipedia_title": override_title,
         }
 
-    # Run disambiguation if enabled and no override
+    # Run inline disambiguation if enabled and no pre-computed/override
     elif use_disambiguation and disambiguation_client and session:
         transcript_context = payload.get("context", "")
 
