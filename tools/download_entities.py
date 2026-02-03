@@ -634,9 +634,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     out_dir = resolve_output_dir()
-    downloader = Path(__file__).resolve().parents[1] / "wikipedia_image_downloader.py"
+    downloader = Path(__file__).resolve().parent / "download_wikipedia_images.py"
     if not downloader.exists():
-        print("wikipedia_image_downloader.py not found.", file=sys.stderr)
+        print("download_wikipedia_images.py not found.", file=sys.stderr)
         return 2
 
     # Get transcript duration for position calculations
