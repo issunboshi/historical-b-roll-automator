@@ -30,6 +30,10 @@ from bs4 import BeautifulSoup
 import configparser
 import datetime
 
+# Auto-load API keys from config file (for tools/ location)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config  # noqa: F401
+
 
 WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
 DEFAULT_USER_AGENT = "b-roll-finder/0.1 (Wikipedia image downloader; contact: local script)"
@@ -52,8 +56,16 @@ BLACKLIST_BASENAME_PATTERNS = [
 
 
 def build_http_session(user_agent: str) -> requests.Session:
+    """Build HTTP session with User-Agent and optional Wikipedia API authentication."""
     session = requests.Session()
     session.headers.update({"User-Agent": user_agent})
+
+    # Add Wikipedia API authentication if access token is available
+    # This provides higher rate limits (5000 req/hour vs ~500 unauthenticated)
+    access_token = os.environ.get("WIKIPEDIA_API_ACCESS_TOKEN")
+    if access_token:
+        session.headers.update({"Authorization": f"Bearer {access_token}"})
+
     return session
 
 

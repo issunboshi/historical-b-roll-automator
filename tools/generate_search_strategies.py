@@ -28,6 +28,8 @@ Usage:
         batch_size=7
     )
 
+NOTE: API keys are auto-loaded from .wikipedia_image_downloader.ini via config module.
+
     # As a CLI
     python tools/generate_search_strategies.py --map enriched_entities.json --video-context "AI Tutorial"
 """
@@ -38,7 +40,12 @@ import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 from typing import Dict, List, Optional
+
+# Auto-load API keys from config file
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config  # noqa: F401
 
 from anthropic import Anthropic
 from diskcache import Cache

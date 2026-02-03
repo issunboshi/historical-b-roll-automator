@@ -278,7 +278,7 @@ Override with CLI flags or environment variables.
 The underlying Wikipedia downloader can be used independently:
 
 ```bash
-python3 wikipedia_image_downloader.py "SEARCH TERM" ["ANOTHER TERM" ...]
+python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 ```
 
 ### Options

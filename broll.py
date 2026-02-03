@@ -27,12 +27,17 @@ Config:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Auto-load API keys from config file
+import config  # noqa: F401
 
 # Optional YAML support for config
 try:
@@ -104,6 +109,151 @@ def resolve_script_path(script_name: str) -> Path:
     if root_path.exists():
         return root_path
     raise FileNotFoundError(f"Script not found: {script_name}")
+
+
+# =============================================================================
+# Pipeline Checkpointing
+# =============================================================================
+
+CHECKPOINT_VERSION = 1
+CHECKPOINT_FILENAME = ".broll_checkpoint.json"
+
+# Pipeline step names in execution order
+PIPELINE_STEPS = ["extract", "enrich", "strategies", "disambiguate", "download", "xml"]
+
+
+def compute_srt_hash(srt_path: Path) -> str:
+    """Compute SHA256 hash of SRT file contents.
+
+    Used to detect if the source file has changed between pipeline runs.
+
+    Args:
+        srt_path: Path to SRT file
+
+    Returns:
+        Hexadecimal SHA256 hash string
+    """
+    hasher = hashlib.sha256()
+    with open(srt_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def load_checkpoint(output_dir: Path) -> Optional[Dict]:
+    """Load checkpoint from output directory if it exists.
+
+    Args:
+        output_dir: Pipeline output directory
+
+    Returns:
+        Checkpoint dict or None if no valid checkpoint exists
+    """
+    checkpoint_path = output_dir / CHECKPOINT_FILENAME
+    if not checkpoint_path.exists():
+        return None
+
+    try:
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            checkpoint = json.load(f)
+
+        # Validate checkpoint version
+        if checkpoint.get("version") != CHECKPOINT_VERSION:
+            print(f"Warning: Checkpoint version mismatch (expected {CHECKPOINT_VERSION}, "
+                  f"got {checkpoint.get('version')}). Starting fresh.", file=sys.stderr)
+            return None
+
+        return checkpoint
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Warning: Failed to load checkpoint: {e}. Starting fresh.", file=sys.stderr)
+        return None
+
+
+def save_checkpoint(output_dir: Path, checkpoint: Dict) -> None:
+    """Save checkpoint to output directory.
+
+    Uses atomic write pattern (write to temp, then rename) for safety.
+
+    Args:
+        output_dir: Pipeline output directory
+        checkpoint: Checkpoint data to save
+    """
+    checkpoint_path = output_dir / CHECKPOINT_FILENAME
+    temp_path = output_dir / f"{CHECKPOINT_FILENAME}.tmp"
+
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(checkpoint, f, indent=2)
+
+        # Atomic rename
+        temp_path.replace(checkpoint_path)
+    except IOError as e:
+        print(f"Warning: Failed to save checkpoint: {e}", file=sys.stderr)
+
+
+def create_checkpoint(srt_path: Path, output_dir: Path) -> Dict:
+    """Create a new checkpoint for a pipeline run.
+
+    Args:
+        srt_path: Path to source SRT file
+        output_dir: Pipeline output directory
+
+    Returns:
+        New checkpoint dict with all steps marked as not completed
+    """
+    return {
+        "version": CHECKPOINT_VERSION,
+        "srt_path": str(srt_path.absolute()),
+        "srt_hash": compute_srt_hash(srt_path),
+        "output_dir": str(output_dir.absolute()),
+        "created": datetime.now(timezone.utc).isoformat(),
+        "steps": {
+            step: {"completed": False, "timestamp": None}
+            for step in PIPELINE_STEPS
+        }
+    }
+
+
+def mark_step_completed(checkpoint: Dict, step_name: str) -> None:
+    """Mark a pipeline step as completed in the checkpoint.
+
+    Args:
+        checkpoint: Checkpoint dict to update (modified in place)
+        step_name: Name of the step to mark as completed
+    """
+    checkpoint["steps"][step_name] = {
+        "completed": True,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def get_steps_to_run(checkpoint: Dict, from_step: Optional[str] = None) -> List[str]:
+    """Determine which pipeline steps need to run.
+
+    Args:
+        checkpoint: Checkpoint dict
+        from_step: Optional step name to start from (overrides checkpoint)
+
+    Returns:
+        List of step names that need to run, in order
+    """
+    if from_step:
+        # Start from specified step, run all subsequent steps
+        if from_step not in PIPELINE_STEPS:
+            raise ValueError(f"Invalid step name: {from_step}. "
+                           f"Valid steps: {', '.join(PIPELINE_STEPS)}")
+        start_idx = PIPELINE_STEPS.index(from_step)
+        return PIPELINE_STEPS[start_idx:]
+
+    # Resume from checkpoint - find first incomplete step
+    steps_to_run = []
+    for step in PIPELINE_STEPS:
+        step_info = checkpoint["steps"].get(step, {})
+        if not step_info.get("completed", False):
+            steps_to_run.append(step)
+
+    return steps_to_run
+
 
 
 def run_step(
@@ -294,9 +444,46 @@ def cmd_strategies(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 1
 
 
+def cmd_disambiguate(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Pre-compute Wikipedia disambiguation for all entities.
+
+    This step runs BEFORE download to batch all disambiguation work,
+    dramatically improving total pipeline time by enabling high parallelism.
+    """
+    script = resolve_script_path("disambiguate_entities.py")
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: entities_map not found: {map_path}", file=sys.stderr)
+        return 1
+
+    parallel = getattr(args, 'disambig_parallel', None) or config.get("disambig_parallel", 10)
+    min_priority = getattr(args, 'min_priority', None)
+    if min_priority is None:
+        min_priority = config.get("min_priority", 0.5)
+
+    cmd = [
+        sys.executable, str(script),
+        "--map", str(map_path),
+        "--parallel", str(parallel),
+        "--min-priority", str(min_priority),
+    ]
+
+    if hasattr(args, 'cache_dir') and args.cache_dir:
+        cmd.extend(["--cache-dir", args.cache_dir])
+
+    try:
+        run_step("Pre-computing Wikipedia disambiguation", cmd)
+        print(f"\nDisambiguation complete: {map_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Disambiguation failed: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Generate FCP XML from entities map."""
-    script = resolve_script_path("generate_broll_xml.py")
+    script = resolve_script_path("generate_xml.py")
     
     map_path = Path(args.map)
     if not map_path.exists():
@@ -346,7 +533,12 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
 
 def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
-    """Run the full pipeline: extract -> enrich -> strategies -> download -> xml."""
+    """Run the full pipeline: extract -> enrich -> strategies -> disambiguate -> download -> xml.
+
+    Supports checkpointing for resuming failed pipelines:
+    - Use --resume to continue from last checkpoint
+    - Use --from-step to start from a specific step
+    """
     # Validate required inputs
     if not args.srt:
         print("Error: --srt is required for pipeline command", file=sys.stderr)
@@ -371,92 +563,162 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     enriched_entities_path = output_dir / "enriched_entities.json"
     strategies_entities_path = output_dir / "strategies_entities.json"
     xml_path = output_dir / "broll_timeline.xml"
-    
+
+    # Handle checkpointing
+    checkpoint = None
+    from_step = getattr(args, 'from_step', None)
+    resume = getattr(args, 'resume', False)
+
+    if resume or from_step:
+        checkpoint = load_checkpoint(output_dir)
+        if checkpoint:
+            # Validate SRT hash matches
+            current_hash = compute_srt_hash(srt_path)
+            if checkpoint.get("srt_hash") != current_hash:
+                print("Warning: SRT file has changed since checkpoint. Starting fresh.",
+                      file=sys.stderr)
+                checkpoint = None
+
+    if checkpoint is None:
+        checkpoint = create_checkpoint(srt_path, output_dir)
+
+    steps_to_run = get_steps_to_run(checkpoint, from_step)
+
+    if not steps_to_run:
+        print("\nAll steps already completed. Use --from-step to re-run specific steps.")
+        return 0
+
     print(f"\n{'#'*60}")
     print(f"# B-Roll Pipeline")
     print(f"#")
     print(f"# Input:  {srt_path}")
     print(f"# Output: {output_dir}")
+    print(f"# Steps:  {', '.join(steps_to_run)}")
     print(f"{'#'*60}")
-    
+
     # Step 1: Extract entities
-    extract_args = argparse.Namespace(
-        srt=str(srt_path),
-        output=str(entities_path),
-        output_dir=None,
-        provider=args.provider,
-        model=args.model,
-        fps=args.fps,
-        subject=args.subject,
-        delay=args.extract_delay,
-    )
-    
-    result = cmd_extract(extract_args, config)
-    if result != 0:
-        print("\nPipeline failed at: entity extraction", file=sys.stderr)
-        return result
+    if "extract" in steps_to_run:
+        extract_args = argparse.Namespace(
+            srt=str(srt_path),
+            output=str(entities_path),
+            output_dir=None,
+            provider=args.provider,
+            model=args.model,
+            fps=args.fps,
+            subject=args.subject,
+            delay=args.extract_delay,
+        )
+
+        result = cmd_extract(extract_args, config)
+        if result != 0:
+            print("\nPipeline failed at: entity extraction", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "extract")
+        save_checkpoint(output_dir, checkpoint)
 
     # Step 2: Enrich entities
-    enrich_args = argparse.Namespace(
-        map=str(entities_path),
-        srt=str(srt_path),
-        output=str(enriched_entities_path),
-    )
+    if "enrich" in steps_to_run:
+        enrich_args = argparse.Namespace(
+            map=str(entities_path),
+            srt=str(srt_path),
+            output=str(enriched_entities_path),
+        )
 
-    result = cmd_enrich(enrich_args, config)
-    if result != 0:
-        print("\nPipeline failed at: entity enrichment", file=sys.stderr)
-        return result
+        result = cmd_enrich(enrich_args, config)
+        if result != 0:
+            print("\nPipeline failed at: entity enrichment", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "enrich")
+        save_checkpoint(output_dir, checkpoint)
 
     # Step 3: Generate search strategies
-    strategies_args = argparse.Namespace(
-        map=str(enriched_entities_path),
-        output=str(strategies_entities_path),
-        video_context=args.subject,  # Use --subject as video context
-        batch_size=getattr(args, 'batch_size', None),
-        cache_dir=getattr(args, 'cache_dir', None),
-    )
+    if "strategies" in steps_to_run:
+        strategies_args = argparse.Namespace(
+            map=str(enriched_entities_path),
+            output=str(strategies_entities_path),
+            video_context=args.subject,  # Use --subject as video context
+            batch_size=getattr(args, 'batch_size', None),
+            cache_dir=getattr(args, 'cache_dir', None),
+        )
 
-    result = cmd_strategies(strategies_args, config)
-    if result != 0:
-        print("\nPipeline failed at: search strategy generation", file=sys.stderr)
-        return result
+        result = cmd_strategies(strategies_args, config)
+        if result != 0:
+            print("\nPipeline failed at: search strategy generation", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
 
-    # Step 4: Download images
-    download_args = argparse.Namespace(
-        map=str(strategies_entities_path),
-        images_per_entity=args.images_per_entity,
-        delay=args.download_delay,
-        parallel=args.parallel,
-        no_svg_to_png=args.no_svg_to_png,
-        min_priority=getattr(args, 'min_priority', None),
-        verbose=getattr(args, 'verbose', False),
-    )
+        mark_step_completed(checkpoint, "strategies")
+        save_checkpoint(output_dir, checkpoint)
 
-    result = cmd_download(download_args, config)
-    if result != 0:
-        print("\nPipeline failed at: image download", file=sys.stderr)
-        return result
+    # Step 4: Pre-compute disambiguation (parallel, fast)
+    if "disambiguate" in steps_to_run:
+        disambiguate_args = argparse.Namespace(
+            map=str(strategies_entities_path),
+            disambig_parallel=getattr(args, 'disambig_parallel', 10),
+            min_priority=getattr(args, 'min_priority', 0.5),
+            cache_dir=getattr(args, 'cache_dir', None),
+        )
 
-    # Step 5: Generate XML
-    xml_args = argparse.Namespace(
-        map=str(strategies_entities_path),
-        output=str(xml_path),
-        output_dir=None,
-        fps=args.fps,
-        duration=args.duration,
-        gap=args.gap,
-        tracks=args.tracks,
-        allow_non_pd=args.allow_non_pd,
-        timeline_name=args.timeline_name,
-        min_match_quality=getattr(args, 'min_match_quality', 'high'),
-    )
-    
-    result = cmd_xml(xml_args, config)
-    if result != 0:
-        print("\nPipeline failed at: XML generation", file=sys.stderr)
-        return result
-    
+        result = cmd_disambiguate(disambiguate_args, config)
+        if result != 0:
+            print("\nPipeline failed at: disambiguation", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "disambiguate")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 5: Download images (now much faster with pre-computed disambiguation)
+    if "download" in steps_to_run:
+        download_args = argparse.Namespace(
+            map=str(strategies_entities_path),
+            images_per_entity=args.images_per_entity,
+            delay=args.download_delay,
+            parallel=args.parallel,
+            no_svg_to_png=args.no_svg_to_png,
+            min_priority=getattr(args, 'min_priority', None),
+            verbose=getattr(args, 'verbose', False),
+            output_dir=str(output_dir),  # Pass output directory to download step
+        )
+
+        result = cmd_download(download_args, config)
+        if result != 0:
+            print("\nPipeline failed at: image download", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "download")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 6: Generate XML
+    if "xml" in steps_to_run:
+        xml_args = argparse.Namespace(
+            map=str(strategies_entities_path),
+            output=str(xml_path),
+            output_dir=None,
+            fps=args.fps,
+            duration=args.duration,
+            gap=args.gap,
+            tracks=args.tracks,
+            allow_non_pd=args.allow_non_pd,
+            timeline_name=args.timeline_name,
+            min_match_quality=getattr(args, 'min_match_quality', 'high'),
+        )
+
+        result = cmd_xml(xml_args, config)
+        if result != 0:
+            print("\nPipeline failed at: XML generation", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "xml")
+        save_checkpoint(output_dir, checkpoint)
+
+
     # Success summary
     print(f"\n{'#'*60}")
     print(f"# Pipeline Complete!")
@@ -507,8 +769,8 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         ("enrich_entities.py", "Entity enrichment"),
         ("generate_search_strategies.py", "Search strategy generation"),
         ("download_entities.py", "Image download"),
-        ("generate_broll_xml.py", "XML generation"),
-        ("wikipedia_image_downloader.py", "Wikipedia downloader"),
+        ("generate_xml.py", "XML generation"),
+        ("download_wikipedia_images.py", "Wikipedia downloader"),
     ]
     
     for script_name, description in scripts:
@@ -582,8 +844,10 @@ Examples:
     p_pipeline.add_argument("--timeline-name", help="Name for the timeline")
     p_pipeline.add_argument("--extract-delay", type=float, default=0.2, help="Delay between LLM calls")
     p_pipeline.add_argument("--download-delay", type=float, default=0.1, help="Delay between download requests")
-    p_pipeline.add_argument("-j", "--parallel", type=int, default=4,
-                            help="Number of parallel downloads (default: 4)")
+    p_pipeline.add_argument("-j", "--parallel", type=int, default=10,
+                            help="Number of parallel downloads (default: 10)")
+    p_pipeline.add_argument("--disambig-parallel", type=int, default=10,
+                            help="Number of parallel disambiguation workers (default: 10)")
     p_pipeline.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
     p_pipeline.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
     p_pipeline.add_argument("--cache-dir", help="Wikipedia cache directory")
@@ -594,7 +858,13 @@ Examples:
     p_pipeline.add_argument("--min-match-quality", default='high',
                             choices=['high', 'medium', 'low', 'none'],
                             help="Minimum match quality to include in timeline (default: high)")
-    
+    p_pipeline.add_argument("--resume", action="store_true",
+                            help="Resume from last checkpoint (skips completed steps)")
+    p_pipeline.add_argument("--from-step",
+                            choices=["extract", "enrich", "strategies", "disambiguate", "download", "xml"],
+                            help="Start from specific step (ignores checkpoint)")
+
+
     # Extract command
     p_extract = subparsers.add_parser(
         "extract",
@@ -663,6 +933,18 @@ Examples:
                        choices=['high', 'medium', 'low', 'none'],
                        help="Minimum match quality to include in timeline (default: high)")
     
+    # Disambiguate command
+    p_disambig = subparsers.add_parser(
+        "disambiguate",
+        help="Pre-compute Wikipedia disambiguation for all entities",
+    )
+    p_disambig.add_argument("--map", required=True, help="Path to entities_map.json")
+    p_disambig.add_argument("-j", "--disambig-parallel", type=int, default=10,
+                            help="Number of parallel disambiguation workers (default: 10)")
+    p_disambig.add_argument("--min-priority", type=float, default=0.5,
+                            help="Minimum priority threshold (0.0 disables)")
+    p_disambig.add_argument("--cache-dir", help="Wikipedia cache directory")
+
     # Status command
     subparsers.add_parser(
         "status",
@@ -685,6 +967,7 @@ Examples:
         "download": cmd_download,
         "enrich": cmd_enrich,
         "strategies": cmd_strategies,
+        "disambiguate": cmd_disambiguate,
         "xml": cmd_xml,
         "status": cmd_status,
     }

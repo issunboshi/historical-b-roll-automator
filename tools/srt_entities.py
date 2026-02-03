@@ -25,7 +25,12 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Auto-load API keys from config file
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config  # noqa: F401
 
 import requests
 from dotenv import load_dotenv
