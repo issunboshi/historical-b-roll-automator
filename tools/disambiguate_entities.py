@@ -209,7 +209,6 @@ def disambiguate_single_entity(
             session=session,
             client=client,
             cache=cache,
-            use_decision_cache=True,
         )
     except Exception as e:
         safe_print(f"[{idx}/{total}] Disambiguation failed for {entity_name}: {e}")

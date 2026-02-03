@@ -607,14 +607,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     with open(args.map, "r", encoding="utf-8") as f:
         entities_map = json.load(f)
     entities: Dict[str, Dict] = entities_map.get("entities", {})
+
+    # Load montage data if available (to boost image counts for montage entities)
+    montage_image_counts: Dict[str, int] = {}
+    montage_entities: set = set()
+    montages_path = Path(args.map).parent / "montages.json"
+    if montages_path.exists():
+        try:
+            with open(montages_path, "r", encoding="utf-8") as f:
+                montages_data = json.load(f)
+            for montage in montages_data.get("montage_opportunities", []):
+                suggested_count = montage.get("suggested_image_count", 4)
+                for entity in montage.get("entities", []):
+                    montage_entities.add(entity)
+                    # Use maximum if entity appears in multiple montages
+                    montage_image_counts[entity] = max(
+                        montage_image_counts.get(entity, 0),
+                        suggested_count
+                    )
+            if montage_entities:
+                print(f"Loaded {len(montage_entities)} montage entities from {montages_path}")
+        except Exception as e:
+            print(f"Warning: Failed to load montages: {e}", file=sys.stderr)
     if not entities:
         print("No entities in map.", file=sys.stderr)
         return 2
 
     out_dir = resolve_output_dir()
-    downloader = Path(__file__).resolve().parents[1] / "wikipedia_image_downloader.py"
+    downloader = Path(__file__).resolve().parent / "download_wikipedia_images.py"
     if not downloader.exists():
-        print("wikipedia_image_downloader.py not found.", file=sys.stderr)
+        print("download_wikipedia_images.py not found.", file=sys.stderr)
         return 2
 
     # Get transcript duration for position calculations
@@ -706,6 +728,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Track elevated image count statistics
     elevated_count = 0
 
+    # Track montage entity count
+    montage_download_count = 0
+
     if workers == 1:
         # Sequential mode (original behavior, slightly optimized)
         for idx, (entity_name, payload) in enumerate(to_download, start=1):
@@ -719,12 +744,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             mention_count = len(payload.get("occurrences", []))
             if mention_count >= 3:
                 elevated_count += 1
+
+            # Check for montage-boosted image count
+            entity_images = args.images_per_entity
+            is_montage = entity_name in montage_image_counts
+            if is_montage:
+                entity_images = max(entity_images, montage_image_counts[entity_name])
+                montage_download_count += 1
+                safe_print(f"[{idx}/{total}]   Montage entity: downloading {entity_images} images")
+
             name, success, entity_dir, matched_term, disambiguation_result = download_entity(
                 entity_name=entity_name,
                 entity_type=entity_type,
                 out_dir=out_dir,
                 downloader=downloader,
-                images_per_entity=args.images_per_entity,
+                images_per_entity=entity_images,
                 user_agent=args.user_agent,
                 png_width=args.png_width,
                 delay=args.delay,
@@ -758,13 +792,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 mention_count = len(payload.get("occurrences", []))
                 if mention_count >= 3:
                     elevated_count += 1
+
+                # Check for montage-boosted image count
+                entity_images = args.images_per_entity
+                is_montage = entity_name in montage_image_counts
+                if is_montage:
+                    entity_images = max(entity_images, montage_image_counts[entity_name])
+                    montage_download_count += 1
+
                 future = executor.submit(
                     download_entity,
                     entity_name=entity_name,
                     entity_type=entity_type,
                     out_dir=out_dir,
                     downloader=downloader,
-                    images_per_entity=args.images_per_entity,
+                    images_per_entity=entity_images,
                     user_agent=args.user_agent,
                     png_width=args.png_width,
                     delay=args.delay,
@@ -839,6 +881,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             success_count += 1
             payload["download_status"] = "success"
 
+            # Mark montage entities for XML generator
+            if entity_name in montage_entities:
+                payload["is_montage"] = True
+                payload["montage_image_count"] = montage_image_counts.get(entity_name, len(images))
+
             # Determine which strategy type was used
             if matched_term:
                 search_strategies = payload.get("search_strategies", {})
@@ -883,6 +930,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("=" * 60)
     print(f"  Downloaded: {success_count} entities")
     print(f"  Elevated (5 images): {elevated_count} entities")
+    if montage_download_count > 0:
+        print(f"  Montage entities:    {montage_download_count} entities (extra images for rapid sequences)")
     print(f"  Skipped:    {len(skipped_entities)} entities")
     print(f"  Failed:     {fail_count} entities")
     print("=" * 60)
