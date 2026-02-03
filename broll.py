@@ -119,7 +119,7 @@ CHECKPOINT_VERSION = 1
 CHECKPOINT_FILENAME = ".broll_checkpoint.json"
 
 # Pipeline step names in execution order
-PIPELINE_STEPS = ["extract", "enrich", "strategies", "disambiguate", "download", "xml"]
+PIPELINE_STEPS = ["extract", "extract-visuals", "enrich", "montages", "strategies", "disambiguate", "download", "xml"]
 
 
 def compute_srt_hash(srt_path: Path) -> str:
@@ -365,6 +365,62 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 1
 
 
+def cmd_extract_visuals(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Run visual element extraction from SRT (stats, quotes, processes, comparisons)."""
+    script = resolve_script_path("srt_visual_elements.py")
+
+    srt_path = Path(args.srt)
+    if not srt_path.exists():
+        print(f"Error: SRT file not found: {srt_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    elif args.output_dir:
+        out_path = Path(args.output_dir) / "visual_elements.json"
+    else:
+        out_path = Path("visual_elements.json")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build command
+    llm_config = config.get("llm", {})
+    provider = args.provider or llm_config.get("provider", "anthropic")
+    model = args.model or llm_config.get("visuals_model") or (
+        "claude-3-5-haiku-20241022" if provider == "anthropic" else "gpt-4o-mini"
+    )
+    fps = args.fps or config.get("fps", 25.0)
+    batch_size = getattr(args, 'batch_size', None) or config.get("visuals_batch_size", 5)
+
+    cmd = [
+        sys.executable, str(script),
+        "--srt", str(srt_path),
+        "--out", str(out_path),
+        "--provider", provider,
+        "--model", model,
+        "--fps", str(fps),
+        "--batch-size", str(batch_size),
+    ]
+
+    if args.context:
+        cmd.extend(["--context", args.context])
+
+    if args.delay:
+        cmd.extend(["--delay", str(args.delay)])
+
+    if getattr(args, 'no_batch', False):
+        cmd.append("--no-batch")
+
+    try:
+        run_step("Extracting visual elements from transcript", cmd)
+        print(f"\nVisual elements saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Visual element extraction failed: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_enrich(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Run entity enrichment to add priority scores and context."""
     script = resolve_script_path("enrich_entities.py")
@@ -400,6 +456,47 @@ def cmd_enrich(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 0
     except subprocess.CalledProcessError as e:
         print(f"Entity enrichment failed: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_montages(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Detect montage/collage opportunities from entities."""
+    script = resolve_script_path("detect_montages.py")
+
+    entities_path = Path(args.entities)
+    if not entities_path.exists():
+        print(f"Error: entities file not found: {entities_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = entities_path.parent / "montages.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(script),
+        "--entities", str(entities_path),
+        "--out", str(out_path),
+    ]
+
+    if hasattr(args, 'srt') and args.srt:
+        cmd.extend(["--srt", str(args.srt)])
+
+    if hasattr(args, 'window') and args.window:
+        cmd.extend(["--window", str(args.window)])
+
+    if hasattr(args, 'min_entities') and args.min_entities:
+        cmd.extend(["--min-entities", str(args.min_entities)])
+
+    try:
+        run_step("Detecting montage opportunities", cmd)
+        print(f"\nMontages saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Montage detection failed: {e}", file=sys.stderr)
         return 1
 
 
@@ -523,6 +620,11 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     cmd.extend(["--min-match-quality", args.min_match_quality])
 
+    # Add montage clip duration if specified
+    montage_duration = getattr(args, 'montage_clip_duration', None)
+    if montage_duration:
+        cmd.extend(["--montage-clip-duration", str(montage_duration)])
+
     try:
         run_step("Generating FCP XML timeline", cmd)
         print(f"\nXML saved to: {out_path.absolute()}")
@@ -560,6 +662,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     # Define intermediate file paths
     entities_path = output_dir / "entities_map.json"
+    visual_elements_path = output_dir / "visual_elements.json"
     enriched_entities_path = output_dir / "enriched_entities.json"
     strategies_entities_path = output_dir / "strategies_entities.json"
     xml_path = output_dir / "broll_timeline.xml"
@@ -618,7 +721,36 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "extract")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 2: Enrich entities
+    # Step 2: Extract visual elements (optional, skip with --skip-visuals)
+    skip_visuals = getattr(args, 'skip_visuals', False)
+    if "extract-visuals" in steps_to_run and not skip_visuals:
+        extract_visuals_args = argparse.Namespace(
+            srt=str(srt_path),
+            output=str(visual_elements_path),
+            output_dir=None,
+            provider=getattr(args, 'provider', None) or "anthropic",
+            model=getattr(args, 'model', None),
+            fps=args.fps,
+            context=args.subject,  # Use --subject as context
+            delay=args.extract_delay,
+            batch_size=getattr(args, 'visuals_batch_size', 5),
+            no_batch=False,
+        )
+
+        result = cmd_extract_visuals(extract_visuals_args, config)
+        if result != 0:
+            print("\nPipeline failed at: visual element extraction", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "extract-visuals")
+        save_checkpoint(output_dir, checkpoint)
+    elif "extract-visuals" in steps_to_run and skip_visuals:
+        print("\n[Skipping visual element extraction (--skip-visuals)]")
+        mark_step_completed(checkpoint, "extract-visuals")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 3: Enrich entities
     if "enrich" in steps_to_run:
         enrich_args = argparse.Namespace(
             map=str(entities_path),
@@ -635,7 +767,32 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "enrich")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 3: Generate search strategies
+    # Step 4: Detect montage opportunities
+    montages_path = output_dir / "montages.json"
+    skip_montages = getattr(args, 'skip_montages', False)
+    if "montages" in steps_to_run and not skip_montages:
+        montages_args = argparse.Namespace(
+            entities=str(entities_path),
+            srt=str(srt_path),
+            output=str(montages_path),
+            window=getattr(args, 'montage_window', 8.0),
+            min_entities=getattr(args, 'montage_min_entities', 3),
+        )
+
+        result = cmd_montages(montages_args, config)
+        if result != 0:
+            print("\nPipeline failed at: montage detection", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "montages")
+        save_checkpoint(output_dir, checkpoint)
+    elif "montages" in steps_to_run and skip_montages:
+        print("\n[Skipping montage detection (--skip-montages)]")
+        mark_step_completed(checkpoint, "montages")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 5: Generate search strategies
     if "strategies" in steps_to_run:
         strategies_args = argparse.Namespace(
             map=str(enriched_entities_path),
@@ -654,7 +811,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "strategies")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 4: Pre-compute disambiguation (parallel, fast)
+    # Step 5: Pre-compute disambiguation (parallel, fast)
     if "disambiguate" in steps_to_run:
         disambiguate_args = argparse.Namespace(
             map=str(strategies_entities_path),
@@ -672,7 +829,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "disambiguate")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 5: Download images (now much faster with pre-computed disambiguation)
+    # Step 6: Download images (now much faster with pre-computed disambiguation)
     if "download" in steps_to_run:
         download_args = argparse.Namespace(
             map=str(strategies_entities_path),
@@ -694,7 +851,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "download")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 6: Generate XML
+    # Step 7: Generate XML
     if "xml" in steps_to_run:
         xml_args = argparse.Namespace(
             map=str(strategies_entities_path),
@@ -707,6 +864,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             allow_non_pd=args.allow_non_pd,
             timeline_name=args.timeline_name,
             min_match_quality=getattr(args, 'min_match_quality', 'high'),
+            montage_clip_duration=getattr(args, 'montage_clip_duration', 0.6),
         )
 
         result = cmd_xml(xml_args, config)
@@ -724,10 +882,14 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     print(f"# Pipeline Complete!")
     print(f"#")
     print(f"# Output files:")
-    print(f"#   - Entities:   {entities_path}")
-    print(f"#   - Enriched:   {enriched_entities_path}")
-    print(f"#   - Strategies: {strategies_entities_path}")
-    print(f"#   - XML:        {xml_path}")
+    print(f"#   - Entities:       {entities_path}")
+    if not skip_visuals and visual_elements_path.exists():
+        print(f"#   - Visual Elements: {visual_elements_path}")
+    print(f"#   - Enriched:       {enriched_entities_path}")
+    if not skip_montages and montages_path.exists():
+        print(f"#   - Montages:       {montages_path}")
+    print(f"#   - Strategies:     {strategies_entities_path}")
+    print(f"#   - XML:            {xml_path}")
     print(f"#")
     print(f"# Next steps:")
     print(f"#   1. Open DaVinci Resolve")
@@ -766,7 +928,9 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     scripts = [
         ("srt_entities.py", "Entity extraction"),
+        ("srt_visual_elements.py", "Visual element extraction"),
         ("enrich_entities.py", "Entity enrichment"),
+        ("detect_montages.py", "Montage detection"),
         ("generate_search_strategies.py", "Search strategy generation"),
         ("download_entities.py", "Image download"),
         ("generate_xml.py", "XML generation"),
@@ -861,8 +1025,20 @@ Examples:
     p_pipeline.add_argument("--resume", action="store_true",
                             help="Resume from last checkpoint (skips completed steps)")
     p_pipeline.add_argument("--from-step",
-                            choices=["extract", "enrich", "strategies", "disambiguate", "download", "xml"],
+                            choices=["extract", "extract-visuals", "enrich", "montages", "strategies", "disambiguate", "download", "xml"],
                             help="Start from specific step (ignores checkpoint)")
+    p_pipeline.add_argument("--skip-visuals", action="store_true",
+                            help="Skip visual element extraction (stats, quotes, processes)")
+    p_pipeline.add_argument("--visuals-batch-size", type=int, default=5,
+                            help="Cues per LLM call for visual extraction (default: 5)")
+    p_pipeline.add_argument("--montage-window", type=float, default=8.0,
+                            help="Time window in seconds for montage density detection (default: 8.0)")
+    p_pipeline.add_argument("--montage-min-entities", type=int, default=3,
+                            help="Minimum entities for montage detection (default: 3)")
+    p_pipeline.add_argument("--skip-montages", action="store_true",
+                            help="Skip montage/collage opportunity detection")
+    p_pipeline.add_argument("--montage-clip-duration", type=float, default=0.6,
+                            help="Duration per image in montage sequences (default: 0.6s)")
 
 
     # Extract command
@@ -879,6 +1055,22 @@ Examples:
     p_extract.add_argument("--model", help="LLM model name")
     p_extract.add_argument("--delay", type=float, help="Delay between LLM calls")
     
+    # Extract visuals command
+    p_extract_visuals = subparsers.add_parser(
+        "extract-visuals",
+        help="Extract visual elements (stats, quotes, processes, comparisons) from SRT",
+    )
+    p_extract_visuals.add_argument("--srt", required=True, help="Path to SRT transcript")
+    p_extract_visuals.add_argument("--output", "-o", help="Output JSON path")
+    p_extract_visuals.add_argument("--output-dir", help="Output directory (creates visual_elements.json inside)")
+    p_extract_visuals.add_argument("--fps", type=float, help="FPS for timecode conversion")
+    p_extract_visuals.add_argument("--context", help="Video topic/context for better extraction")
+    p_extract_visuals.add_argument("--provider", choices=["anthropic", "openai"], help="LLM provider (default: anthropic)")
+    p_extract_visuals.add_argument("--model", help="LLM model name")
+    p_extract_visuals.add_argument("--delay", type=float, help="Delay between LLM calls")
+    p_extract_visuals.add_argument("--batch-size", type=int, default=5, help="Cues per LLM call (default: 5)")
+    p_extract_visuals.add_argument("--no-batch", action="store_true", help="Process cues one at a time")
+
     # Download command
     p_download = subparsers.add_parser(
         "download",
@@ -903,6 +1095,19 @@ Examples:
     p_enrich.add_argument("--map", required=True, help="Path to entities_map.json")
     p_enrich.add_argument("--srt", required=True, help="Path to original SRT file")
     p_enrich.add_argument("--output", "-o", help="Output JSON path (default: enriched_entities.json)")
+
+    # Montages command
+    p_montages = subparsers.add_parser(
+        "montages",
+        help="Detect montage/collage opportunities from entities",
+    )
+    p_montages.add_argument("--entities", required=True, help="Path to entities_map.json")
+    p_montages.add_argument("--srt", help="Path to original SRT (for enumeration detection)")
+    p_montages.add_argument("--output", "-o", help="Output JSON path")
+    p_montages.add_argument("--window", type=float, default=8.0,
+                            help="Time window in seconds for density detection (default: 8.0)")
+    p_montages.add_argument("--min-entities", type=int, default=3,
+                            help="Minimum entities for density montage (default: 3)")
 
     # Strategies command
     p_strategies = subparsers.add_parser(
@@ -932,6 +1137,8 @@ Examples:
     p_xml.add_argument("--min-match-quality", default='high',
                        choices=['high', 'medium', 'low', 'none'],
                        help="Minimum match quality to include in timeline (default: high)")
+    p_xml.add_argument("--montage-clip-duration", type=float, default=0.6,
+                       help="Duration per image in montage sequences (default: 0.6s)")
     
     # Disambiguate command
     p_disambig = subparsers.add_parser(
@@ -964,8 +1171,10 @@ Examples:
     handlers = {
         "pipeline": cmd_pipeline,
         "extract": cmd_extract,
+        "extract-visuals": cmd_extract_visuals,
         "download": cmd_download,
         "enrich": cmd_enrich,
+        "montages": cmd_montages,
         "strategies": cmd_strategies,
         "disambiguate": cmd_disambiguate,
         "xml": cmd_xml,

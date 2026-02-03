@@ -85,3 +85,10 @@ venv.bak/
 # Project output files
 output/
 /.wikipedia_image_downloader.ini
+
+# Local tool caches
+.serena/
+
+# Pipeline run artifacts (named entity directories)
+new-new-entities.json/
+*.broll_checkpoint.json

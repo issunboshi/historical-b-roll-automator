@@ -336,7 +336,9 @@ After generating the XML:
                         help='Minimum match quality to include (default: high)')
     parser.add_argument('--timeline-name', default='B-Roll Timeline',
                         help='Name for the timeline (default: B-Roll Timeline)')
-    
+    parser.add_argument('--montage-clip-duration', type=float, default=0.6,
+                        help='Duration per image in montage sequence (default: 0.6s)')
+
     args = parser.parse_args()
     
     # Read JSON
@@ -375,48 +377,82 @@ After generating the XML:
 
     # Build list of clips with timecodes
     clips = []
+    montage_count = 0
+    montage_clip_frames = seconds_to_frames(args.montage_clip_duration, args.fps)
+
     for entity_name, payload in qualified_entities.items():
         images = payload.get('images', [])
         occurrences = payload.get('occurrences', [])
-        
+
         if not images or not occurrences:
             continue
-        
+
         # Filter by public domain
         if args.allow_non_pd:
             filtered_images = images
         else:
             filtered_images = [img for img in images if img.get('category') == 'public_domain']
-        
+
         if not filtered_images:
             continue
-        
+
+        # Check if this is a montage entity
+        is_montage = payload.get('is_montage', False)
+        montage_image_count = payload.get('montage_image_count', len(filtered_images))
+
         # Round-robin through images for each occurrence
         for idx, occ in enumerate(occurrences):
             tc = occ.get('timecode')
             if not tc:
                 continue
 
-            img = filtered_images[idx % len(filtered_images)]
-            img_path = img.get('path', '')
-
-            if not img_path or not os.path.exists(img_path):
-                print(f"WARNING: Image not found: {img_path}", file=sys.stderr)
-                continue
-
             seconds = srt_timecode_to_seconds(tc)
             frame = seconds_to_frames(seconds, args.fps)
 
-            clips.append({
-                'frame': frame,
-                'seconds': seconds,
-                'path': os.path.abspath(img_path),
-                'name': f"{entity_name} - {img.get('filename', os.path.basename(img_path))}",
-                'entity': entity_name,
-                'occurrence_index': idx,                        # Which occurrence this is
-                'image_index': idx % len(filtered_images),      # Which image was used
-                'total_images': len(filtered_images),           # How many images available
-            })
+            if is_montage and len(filtered_images) >= 2:
+                # Create rapid sequence montage: multiple images in quick succession
+                montage_count += 1
+                num_montage_images = min(montage_image_count, len(filtered_images))
+
+                for m_idx in range(num_montage_images):
+                    img = filtered_images[m_idx]
+                    img_path = img.get('path', '')
+
+                    if not img_path or not os.path.exists(img_path):
+                        continue
+
+                    montage_frame = frame + (m_idx * montage_clip_frames)
+                    clips.append({
+                        'frame': montage_frame,
+                        'seconds': seconds + (m_idx * args.montage_clip_duration),
+                        'path': os.path.abspath(img_path),
+                        'name': f"{entity_name} - montage {m_idx + 1}/{num_montage_images}",
+                        'entity': entity_name,
+                        'occurrence_index': idx,
+                        'image_index': m_idx,
+                        'total_images': num_montage_images,
+                        'is_montage_clip': True,
+                        'montage_duration_frames': montage_clip_frames,
+                    })
+            else:
+                # Standard single-image clip
+                img = filtered_images[idx % len(filtered_images)]
+                img_path = img.get('path', '')
+
+                if not img_path or not os.path.exists(img_path):
+                    print(f"WARNING: Image not found: {img_path}", file=sys.stderr)
+                    continue
+
+                clips.append({
+                    'frame': frame,
+                    'seconds': seconds,
+                    'path': os.path.abspath(img_path),
+                    'name': f"{entity_name} - {img.get('filename', os.path.basename(img_path))}",
+                    'entity': entity_name,
+                    'occurrence_index': idx,
+                    'image_index': idx % len(filtered_images),
+                    'total_images': len(filtered_images),
+                })
     
     if not clips:
         print("ERROR: No valid clips to place", file=sys.stderr)
@@ -440,39 +476,50 @@ After generating the XML:
     
     for clip in clips:
         clip_start = clip['frame']
-        clip_end = clip_start + duration_frames
-        
+        # Use montage duration if this is a montage clip
+        clip_duration = clip.get('montage_duration_frames', duration_frames)
+        clip_end = clip_start + clip_duration
+
         # Find available track
         chosen_track = None
+        # For montage clips, use smaller gap
+        effective_gap = gap_frames // 4 if clip.get('is_montage_clip') else gap_frames
+
         for track_idx in range(base_track, base_track + args.tracks):
-            if clip_start >= track_end[track_idx] + gap_frames:
+            if clip_start >= track_end[track_idx] + effective_gap:
                 chosen_track = track_idx
                 break
-        
+
         if chosen_track is None:
             # All tracks busy, find one with earliest end
             earliest_track = min(track_end, key=track_end.get)
             if clip_start >= track_end[earliest_track]:
                 chosen_track = earliest_track
             else:
-                print(f"  Skipping: {clip['name']} at {frames_to_timecode(clip_start, args.fps)} - all tracks occupied")
+                # For montage clips, try harder to place them (they're meant to be rapid)
+                if not clip.get('is_montage_clip'):
+                    print(f"  Skipping: {clip['name']} at {frames_to_timecode(clip_start, args.fps)} - all tracks occupied")
                 skipped += 1
                 continue
-        
+
         placements.append({
             'frame': clip_start,
             'track': chosen_track,
             'path': clip['path'],
             'name': clip['name'],
-            'duration_frames': duration_frames,
+            'duration_frames': clip_duration,
         })
         track_end[chosen_track] = clip_end
 
         # Show image rotation info
         img_idx = clip.get('image_index', 0)
         total_imgs = clip.get('total_images', 1)
-        rotation_note = f" [image {img_idx + 1}/{total_imgs}]" if total_imgs > 1 else ""
-        print(f"  V{chosen_track}: {clip['name']}{rotation_note} at {frames_to_timecode(clip_start, args.fps)}")
+        is_montage = clip.get('is_montage_clip', False)
+        if is_montage:
+            print(f"  V{chosen_track}: {clip['name']} at {frames_to_timecode(clip_start, args.fps)} (montage)")
+        else:
+            rotation_note = f" [image {img_idx + 1}/{total_imgs}]" if total_imgs > 1 else ""
+            print(f"  V{chosen_track}: {clip['name']}{rotation_note} at {frames_to_timecode(clip_start, args.fps)}")
 
     print(f"\nPlacing {len(placements)} clips, skipped {skipped}")
 
@@ -489,6 +536,8 @@ After generating the XML:
     print(f"\nImage variety:")
     print(f"  Multi-image entities: {multi_image_entities}")
     print(f"  Using rotation: {len(entities_with_rotation)}")
+    if montage_count > 0:
+        print(f"  Montage sequences: {montage_count} (rapid {args.montage_clip_duration}s clips)")
 
     # Log excluded entities
     if excluded_entities:
