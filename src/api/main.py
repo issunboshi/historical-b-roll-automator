@@ -52,14 +52,56 @@ def create_app(
     """
     app = FastAPI(
         title=title,
-        description=(
-            "REST API for the B-Roll Finder pipeline. "
-            "Extract entities from transcripts, download Wikipedia images, "
-            "and generate DaVinci Resolve-compatible XML timelines."
-        ),
+        summary="Automated B-Roll generation from video transcripts",
+        description="""
+## Overview
+
+REST API for the B-Roll Finder pipeline. Automatically extract entities from
+video transcripts, find relevant Wikipedia images, and generate NLE-compatible
+XML timelines.
+
+## Features
+
+- **Entity Extraction**: Parse SRT files to identify people, places, events
+- **Wikipedia Integration**: Search and download relevant images with disambiguation
+- **Timeline Generation**: Export DaVinci Resolve-compatible XML
+
+## Workflow
+
+1. **Start Pipeline**: `POST /api/v1/pipeline/start` with your SRT file
+2. **Monitor Progress**: `GET /api/v1/pipeline/{id}` for status updates
+3. **Get Results**: `GET /api/v1/pipeline/{id}/result` when complete
+
+## Authentication
+
+Currently no authentication required. API keys for Wikipedia and LLM services
+are configured server-side.
+        """,
         version=__version__,
         debug=debug,
         lifespan=lifespan,
+        openapi_tags=[
+            {
+                "name": "Health",
+                "description": "Service health and discovery endpoints",
+            },
+            {
+                "name": "Pipeline",
+                "description": "Full B-Roll generation pipeline operations",
+            },
+            {
+                "name": "Disambiguation",
+                "description": "Wikipedia entity search and disambiguation",
+            },
+        ],
+        license_info={
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT",
+        },
+        contact={
+            "name": "B-Roll Finder",
+            "url": "https://github.com/yourusername/b-roll-finder-app",
+        },
     )
 
     # CORS configuration
