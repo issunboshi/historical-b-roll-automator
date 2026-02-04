@@ -6,11 +6,13 @@ Provides REST access to the B-Roll pipeline for asynchronous execution.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Dict
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from src.core.executor import PipelineExecutor, STEPS
@@ -34,6 +36,107 @@ class PipelineStartResponse(BaseModel):
     pipeline_id: str = Field(description="Unique ID for tracking this pipeline run")
     status: str = Field(description="Initial status (pending)")
     message: str = Field(description="Status message")
+
+
+class UploadResponse(BaseModel):
+    """Response when uploading an SRT file."""
+
+    pipeline_id: str = Field(description="Unique ID for tracking this pipeline run")
+    status: str = Field(description="Initial status (pending)")
+    filename: str = Field(description="Original filename")
+    output_dir: str = Field(description="Directory where results will be saved")
+    message: str = Field(description="Status message")
+
+
+# Default upload directory (can be overridden via environment variable)
+UPLOAD_DIR = Path(os.environ.get("BROLL_UPLOAD_DIR", tempfile.gettempdir())) / "broll_uploads"
+
+
+@router.post("/pipeline/upload", response_model=UploadResponse)
+async def upload_and_start_pipeline(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="SRT subtitle file to process"),
+    output_dir: str | None = Form(None, description="Output directory for results"),
+) -> UploadResponse:
+    """Upload an SRT file and start the pipeline.
+
+    This endpoint accepts file uploads, making it suitable for remote clients
+    that don't have filesystem access to the server.
+
+    Args:
+        file: SRT file (multipart form upload)
+        output_dir: Optional output directory (defaults to temp directory)
+
+    Returns:
+        UploadResponse with pipeline_id for tracking
+
+    Example:
+        ```bash
+        curl -X POST http://localhost:8001/api/v1/pipeline/upload \\
+          -F "file=@my_video.srt" \\
+          -F "output_dir=/path/to/output"
+        ```
+    """
+    # Validate file extension
+    if not file.filename or not file.filename.lower().endswith(".srt"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Please upload an SRT file.",
+        )
+
+    # Generate unique pipeline ID
+    pipeline_id = str(uuid.uuid4())
+
+    # Create upload directory
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Save uploaded file with pipeline ID prefix to avoid collisions
+    safe_filename = f"{pipeline_id}_{file.filename}"
+    srt_path = UPLOAD_DIR / safe_filename
+
+    try:
+        content = await file.read()
+        srt_path.write_bytes(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {e}")
+
+    # Determine output directory
+    if output_dir:
+        output_path = Path(output_dir)
+    else:
+        output_path = UPLOAD_DIR / pipeline_id / "output"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Create config
+    config = PipelineConfig(output_dir=str(output_path))
+
+    # Initialize status
+    status = PipelineStatus(
+        pipeline_id=pipeline_id,
+        status="pending",
+        current_step=None,
+        progress=0.0,
+        steps_completed=[],
+        output_dir=str(output_path),
+    )
+    _pipeline_store[pipeline_id] = status
+
+    # Start background task
+    background_tasks.add_task(
+        _run_pipeline_async,
+        pipeline_id=pipeline_id,
+        srt_path=srt_path,
+        config=config,
+        from_step=None,
+    )
+
+    return UploadResponse(
+        pipeline_id=pipeline_id,
+        status="pending",
+        filename=file.filename,
+        output_dir=str(output_path),
+        message=f"File uploaded and pipeline started. Track at /api/v1/pipeline/{pipeline_id}",
+    )
 
 
 @router.post("/pipeline/start", response_model=PipelineStartResponse)

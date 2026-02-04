@@ -150,6 +150,69 @@ class TestPipelineAPI:
         assert result_response.status_code in (200, 400)
 
 
+class TestFileUploadAPI:
+    """Test file upload endpoint for remote clients."""
+
+    def test_upload_srt_file(self, client, sample_srt):
+        """POST /api/v1/pipeline/upload should accept SRT file upload."""
+        with open(sample_srt, "rb") as f:
+            response = client.post(
+                "/api/v1/pipeline/upload",
+                files={"file": ("test.srt", f, "text/plain")},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "pipeline_id" in data
+        assert data["status"] == "pending"
+        assert data["filename"] == "test.srt"
+        assert "output_dir" in data
+
+    def test_upload_with_custom_output_dir(self, client, sample_srt, tmp_path):
+        """Upload should respect custom output_dir parameter."""
+        custom_output = tmp_path / "custom_output"
+
+        with open(sample_srt, "rb") as f:
+            response = client.post(
+                "/api/v1/pipeline/upload",
+                files={"file": ("test.srt", f, "text/plain")},
+                data={"output_dir": str(custom_output)},
+            )
+
+        assert response.status_code == 200
+        assert str(custom_output) in response.json()["output_dir"]
+
+    def test_upload_rejects_non_srt_file(self, client, tmp_path):
+        """Upload should reject non-SRT files."""
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("This is not an SRT file")
+
+        with open(txt_file, "rb") as f:
+            response = client.post(
+                "/api/v1/pipeline/upload",
+                files={"file": ("test.txt", f, "text/plain")},
+            )
+
+        assert response.status_code == 400
+        assert "srt" in response.json()["detail"].lower()
+
+    def test_upload_then_check_status(self, client, sample_srt):
+        """Full workflow: upload file → check pipeline status."""
+        # Upload file
+        with open(sample_srt, "rb") as f:
+            upload_response = client.post(
+                "/api/v1/pipeline/upload",
+                files={"file": ("test.srt", f, "text/plain")},
+            )
+
+        pipeline_id = upload_response.json()["pipeline_id"]
+
+        # Check status
+        status_response = client.get(f"/api/v1/pipeline/{pipeline_id}")
+        assert status_response.status_code == 200
+        assert status_response.json()["pipeline_id"] == pipeline_id
+
+
 class TestDisambiguationAPI:
     """Test disambiguation endpoints."""
 
