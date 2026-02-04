@@ -5,12 +5,15 @@ Provides REST access to the B-Roll pipeline for asynchronous execution.
 """
 from __future__ import annotations
 
+import logging
 import uuid
+from pathlib import Path
 from typing import Dict
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
+from src.core.executor import PipelineExecutor, STEPS
 from src.models.pipeline import (
     PipelineConfig,
     PipelineRequest,
@@ -48,6 +51,15 @@ async def start_pipeline(
     Returns:
         PipelineStartResponse with pipeline_id for tracking
     """
+    # Validate SRT file exists
+    srt_path = Path(request.srt_path)
+    if not srt_path.exists():
+        raise HTTPException(status_code=400, detail=f"SRT file not found: {request.srt_path}")
+
+    # Warn if resume is requested (not yet implemented)
+    if request.resume:
+        logging.warning("Pipeline resume is not yet implemented - starting from beginning")
+
     # Generate unique pipeline ID
     pipeline_id = str(uuid.uuid4())
 
@@ -66,9 +78,8 @@ async def start_pipeline(
     background_tasks.add_task(
         _run_pipeline_async,
         pipeline_id=pipeline_id,
-        srt_path=request.srt_path,
+        srt_path=srt_path,
         config=request.config,
-        resume=request.resume,
         from_step=request.from_step,
     )
 
@@ -165,54 +176,53 @@ async def cancel_pipeline(pipeline_id: str) -> dict:
 
 async def _run_pipeline_async(
     pipeline_id: str,
-    srt_path: str,
+    srt_path: Path,
     config: PipelineConfig,
-    resume: bool,
     from_step: PipelineStep | None,
 ) -> None:
-    """Run the pipeline asynchronously.
-
-    This is a placeholder that demonstrates the async pattern.
-    Full implementation would call the actual pipeline steps.
+    """Run the pipeline asynchronously using the executor.
 
     Args:
         pipeline_id: Unique pipeline identifier
         srt_path: Path to SRT file
         config: Pipeline configuration
-        resume: Whether to resume from checkpoint
         from_step: Optional step to start from
     """
     status = _pipeline_store[pipeline_id]
     status.status = "running"
 
+    output_dir = Path(config.output_dir) if config.output_dir else srt_path.parent / "output"
+
+    def on_step_start(step: str):
+        # Map step string to PipelineStep enum if valid
+        step_values = [s.value for s in PipelineStep]
+        status.current_step = PipelineStep(step) if step in step_values else None
+
+    def on_step_complete(result):
+        if result.success:
+            status.steps_completed.append(result.step)
+        status.progress = len(status.steps_completed) / len(STEPS)
+
+    executor = PipelineExecutor(
+        srt_path=srt_path,
+        output_dir=output_dir,
+        config=config.model_dump() if hasattr(config, 'model_dump') else {},
+        on_step_start=on_step_start,
+        on_step_complete=on_step_complete,
+    )
+
     try:
-        # TODO: Implement actual pipeline execution
-        # This would call the core pipeline functions
+        from_step_str = from_step.value if from_step else None
+        results = await executor.run_pipeline(from_step=from_step_str)
 
-        steps = [
-            PipelineStep.EXTRACT,
-            PipelineStep.ENRICH,
-            PipelineStep.STRATEGIES,
-            PipelineStep.DISAMBIGUATE,
-            PipelineStep.DOWNLOAD,
-            PipelineStep.XML,
-        ]
-
-        for i, step in enumerate(steps):
-            if status.status == "cancelled":
-                break
-
-            status.current_step = step
-            status.progress = (i + 1) / len(steps)
-
-            # Simulate step execution (replace with actual implementation)
-            # await asyncio.sleep(1)
-
-            status.steps_completed.append(step.value)
-
-        if status.status != "cancelled":
+        # Check if all steps succeeded
+        if all(r.success for r in results):
             status.status = "completed"
             status.progress = 1.0
+        else:
+            failed = next(r for r in results if not r.success)
+            status.status = "failed"
+            status.error = failed.stderr or failed.error or f"Step {failed.step} failed"
 
     except Exception as e:
         status.status = "failed"
