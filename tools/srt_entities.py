@@ -34,8 +34,14 @@ import config  # noqa: F401
 
 import requests
 from dotenv import load_dotenv
+from requests.exceptions import HTTPError, ConnectionError, Timeout
 
 load_dotenv()
+
+# Retry configuration for transient API errors
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0  # seconds, will use exponential backoff
 
 RELATIVE_TIME_PREFIX_RE = re.compile(r"^\s*(\d+\s*(years?|months?|weeks?|days?)\s*(later|after|before|since)|\d{1,3}(st|nd|rd|th)\s+anniversary(?:\s+of)?\s+)", re.IGNORECASE)
 WHITESPACE_RE = re.compile(r"\s+")
@@ -178,10 +184,33 @@ def call_llm_extract(
             ],
             "temperature": 0.2,
         }
-        resp = requests.post(f"{base}/chat/completions", headers=headers, json=body, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = requests.post(f"{base}/chat/completions", headers=headers, json=body, timeout=60)
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                break
+            except HTTPError as e:
+                if e.response is not None and e.response.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] {e.response.status_code} error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+            except (ConnectionError, Timeout) as e:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] Connection error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+        else:
+            if last_error:
+                raise last_error
     elif provider == "ollama":
         host = ollama_host or "http://127.0.0.1:11434"
         body = {
@@ -193,10 +222,33 @@ def call_llm_extract(
             "stream": False,
             "options": {"temperature": 0.2},
         }
-        resp = requests.post(f"{host}/api/chat", json=body, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = requests.post(f"{host}/api/chat", json=body, timeout=120)
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("message", {}).get("content", "")
+                break
+            except HTTPError as e:
+                if e.response is not None and e.response.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] {e.response.status_code} error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+            except (ConnectionError, Timeout) as e:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] Connection error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+        else:
+            if last_error:
+                raise last_error
     else:
         raise ValueError("Unsupported provider. Use 'openai' or 'ollama'.")
 

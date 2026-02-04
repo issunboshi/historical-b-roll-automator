@@ -51,7 +51,18 @@ BLACKLIST_BASENAME_PATTERNS = [
     "wikisource-logo",
     "commons-logo",
     "disambig_gray",
-    "wiktionary-logo-en-v2",
+    "disambig gray",
+    "wiktionary-logo",
+    "wikinews-logo",
+    "wikibooks-logo",
+    "wikiquote-logo",
+    "wikiversity-logo",
+    "wikivoyage-logo",
+    "wikispecies-logo",
+    "mediawiki-logo",
+    "wikidata-logo",
+    "wikipedia-logo",
+    "wikimedia-logo",
 ]
 
 
@@ -209,8 +220,9 @@ def filter_out_ui_icons(file_titles: List[str]) -> List[str]:
     blacklist_patterns = [
         r"padlock", r"lock", r"semi[- ]?protection", r"fully[- ]?protected", r"pp-",
         r"question[_-]?book", r"disambig", r"edit[- ]?clear", r"magnify", r"search",
-        r"wikidata[- ]?logo", r"wikipedia[- ]?logo", r"commons[- ]?logo", r"oojs[_-]ui",
-        r"nuvola", r"crystal[_- ]clear", r"gnome[-_]", r"external[- ]?link", r"ambox",
+        # Catch all Wikimedia project logos (wikipedia, wikibooks, wikinews, etc.)
+        r"wiki\w*[- ]?logo", r"commons[- ]?logo", r"mediawiki[- ]?logo", r"oojs[_-]ui",
+        r"nuvola", r"crystal[_ -]clear", r"gnome[-_]", r"external[- ]?link", r"ambox",
     ]
     blacklist_regex = re.compile("|".join(blacklist_patterns), re.IGNORECASE)
     filtered: List[str] = []

@@ -1,0 +1,127 @@
+[project]
+name = "broll-finder"
+version = "0.2.0"
+description = "Extract entities from transcripts and download Wikipedia images for B-Roll generation"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+requires-python = ">=3.10"
+keywords = ["video", "b-roll", "wikipedia", "davinci-resolve", "transcript", "srt"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Text Processing",
+]
+
+dependencies = [
+    # Core dependencies
+    "requests>=2.28.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "diskcache>=5.6.0",
+    "tenacity>=8.0.0",
+    "wikipedia-api>=0.6.0",
+    "beautifulsoup4>=4.12.0",
+
+    # LLM providers
+    "anthropic>=0.18.0",
+    "openai>=1.0.0",
+
+    # Optional YAML support
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.25.0",  # For testing FastAPI
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "broll-finder[api,dev]",
+]
+
+[project.scripts]
+broll = "broll:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/b-roll-finder-app"
+Documentation = "https://github.com/yourusername/b-roll-finder-app#readme"
+Repository = "https://github.com/yourusername/b-roll-finder-app"
+Issues = "https://github.com/yourusername/b-roll-finder-app/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src", "tools"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tools",
+    "/broll.py",
+    "/config.py",
+    "/README.md",
+    "/pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tools"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "wikipedia-api.*",
+    "diskcache.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
