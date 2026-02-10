@@ -190,14 +190,54 @@ class PipelineRequest(BaseModel):
     )
 
 
+class PipelineStatusResponse(BaseModel):
+    """Public-facing pipeline status (excludes internal server paths).
+
+    This is what API clients see — no output_dir or other server internals.
+    """
+
+    pipeline_id: str = Field(description="Unique identifier for this pipeline run")
+    status: str = Field(
+        description="Overall status (pending, running, completed, failed)"
+    )
+    current_step: Optional[PipelineStep] = Field(
+        default=None, description="Currently executing step"
+    )
+    progress: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Overall progress 0-1"
+    )
+    steps_completed: List[str] = Field(
+        default_factory=list, description="List of completed step names"
+    )
+    error: Optional[str] = Field(
+        default=None, description="Error message if failed"
+    )
+    entities_count: int = Field(
+        default=0, description="Number of entities extracted"
+    )
+    images_downloaded: int = Field(
+        default=0, description="Number of images downloaded"
+    )
+
+
+class ArtifactInfo(BaseModel):
+    """Metadata for a downloadable pipeline artifact."""
+
+    name: str = Field(description="Artifact identifier (e.g. 'entities_map')")
+    filename: str = Field(description="Original filename (e.g. 'entities_map.json')")
+    content_type: str = Field(description="MIME type (e.g. 'application/json')")
+    size_bytes: int = Field(description="File size in bytes")
+    download_url: str = Field(description="URL to download this artifact")
+
+
 class PipelineResult(BaseModel):
     """Result of a completed pipeline run."""
 
     pipeline_id: str = Field(description="Unique identifier for this pipeline run")
     status: str = Field(description="Final status (completed, failed)")
-    entities_path: str = Field(description="Path to entities_map.json")
-    xml_path: Optional[str] = Field(
-        default=None, description="Path to generated XML"
+    artifacts: List[ArtifactInfo] = Field(
+        default_factory=list,
+        description="Downloadable artifacts produced by the pipeline",
     )
     entities_count: int = Field(description="Number of entities extracted")
     images_count: int = Field(description="Number of images downloaded")
