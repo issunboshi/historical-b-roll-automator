@@ -552,7 +552,10 @@ Interactive API docs are available at `http://localhost:8001/docs` (Swagger UI).
 | `POST` | `/api/v1/pipeline/start` | Start pipeline with server-side SRT path |
 | `POST` | `/api/v1/pipeline/upload` | Upload SRT file and start pipeline |
 | `GET` | `/api/v1/pipeline/{id}` | Check pipeline status and progress |
-| `GET` | `/api/v1/pipeline/{id}/result` | Get results (entities path, XML path, counts) |
+| `GET` | `/api/v1/pipeline/{id}/result` | Get result with downloadable artifact metadata |
+| `GET` | `/api/v1/pipeline/{id}/download/{name}` | Download individual artifact (JSON, XML) |
+| `GET` | `/api/v1/pipeline/{id}/download/images` | Download all images as a zip |
+| `GET` | `/api/v1/pipeline/{id}/download/all` | Download entire output as a zip |
 | `DELETE` | `/api/v1/pipeline/{id}` | Cancel a running pipeline |
 
 #### Disambiguation
@@ -570,24 +573,42 @@ Interactive API docs are available at `http://localhost:8001/docs` (Swagger UI).
 ```bash
 curl -X POST http://localhost:8001/api/v1/pipeline/start \
   -H "Content-Type: application/json" \
-  -d '{
-    "srt_path": "/path/to/video.srt",
-    "config": {"output_dir": "/path/to/output"}
-  }'
+  -d '{"srt_path": "/path/to/video.srt"}'
 ```
 
 **Upload SRT file from a remote client:**
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/pipeline/upload \
-  -F "file=@my_video.srt" \
-  -F "output_dir=/path/to/output"
+  -F "file=@my_video.srt"
 ```
 
 **Check pipeline status:**
 
 ```bash
 curl http://localhost:8001/api/v1/pipeline/{pipeline_id}
+```
+
+**Get results (artifact list with download URLs):**
+
+```bash
+curl http://localhost:8001/api/v1/pipeline/{pipeline_id}/result
+```
+
+**Download individual artifacts:**
+
+```bash
+# Download entities JSON
+curl -O http://localhost:8001/api/v1/pipeline/{pipeline_id}/download/entities_map
+
+# Download timeline XML
+curl -O http://localhost:8001/api/v1/pipeline/{pipeline_id}/download/broll_timeline
+
+# Download all images as zip
+curl -O http://localhost:8001/api/v1/pipeline/{pipeline_id}/download/images
+
+# Download everything as zip
+curl -O http://localhost:8001/api/v1/pipeline/{pipeline_id}/download/all
 ```
 
 **Disambiguate a single entity:**
