@@ -166,21 +166,19 @@ class TestFileUploadAPI:
         assert "pipeline_id" in data
         assert data["status"] == "pending"
         assert data["filename"] == "test.srt"
-        assert "output_dir" in data
+        # output_dir is no longer exposed to clients
+        assert "output_dir" not in data
 
-    def test_upload_with_custom_output_dir(self, client, sample_srt, tmp_path):
-        """Upload should respect custom output_dir parameter."""
-        custom_output = tmp_path / "custom_output"
-
+    def test_upload_does_not_accept_output_dir(self, client, sample_srt, tmp_path):
+        """Upload should ignore output_dir — server controls output path."""
         with open(sample_srt, "rb") as f:
             response = client.post(
                 "/api/v1/pipeline/upload",
                 files={"file": ("test.srt", f, "text/plain")},
-                data={"output_dir": str(custom_output)},
             )
 
         assert response.status_code == 200
-        assert str(custom_output) in response.json()["output_dir"]
+        assert "output_dir" not in response.json()
 
     def test_upload_rejects_non_srt_file(self, client, tmp_path):
         """Upload should reject non-SRT files."""
