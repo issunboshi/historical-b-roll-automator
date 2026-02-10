@@ -303,6 +303,91 @@ def prettify_xml(elem: ET.Element) -> str:
     return reparsed.toprettyxml(indent="  ", encoding=None)
 
 
+def calculate_placement_budgets(
+    entities: dict,
+    pervasive_entities: list,
+    max_placements: int = 3,
+    pervasive_max: int = 2,
+) -> dict:
+    """Calculate how many timeline placements each entity gets.
+
+    Args:
+        entities: Dict of entity_name -> payload (with priority, occurrences).
+        pervasive_entities: List of entity names considered pervasive (broad/setting).
+        max_placements: Maximum placements for high-priority entities.
+        pervasive_max: Maximum placements for pervasive entities.
+
+    Returns:
+        Dict of entity_name -> max allowed placements (int).
+    """
+    budgets = {}
+    pervasive_set = {e.lower() for e in pervasive_entities}
+
+    for name, payload in entities.items():
+        occurrences = payload.get("occurrences", [])
+        n = len(occurrences)
+
+        if n <= 1:
+            budgets[name] = 1
+            continue
+
+        # Pervasive entities (auto-detected or from summary)
+        if name.lower() in pervasive_set or n >= 10:
+            budgets[name] = min(pervasive_max, n)
+            continue
+
+        priority = payload.get("priority", 0.5)
+        if priority >= 0.8:
+            budgets[name] = min(max_placements, n)
+        elif priority >= 0.5:
+            budgets[name] = min(max(max_placements - 1, 1), n)
+        else:
+            budgets[name] = min(1, n)
+
+    return budgets
+
+
+def select_occurrences(occurrences: list, budget: int) -> list:
+    """Select which occurrences to place on the timeline.
+
+    Strategy: always include first (introduction), last if budget >= 2,
+    then evenly space remaining picks across the middle.
+
+    Args:
+        occurrences: Full list of occurrence dicts (with timecodes).
+        budget: How many to select.
+
+    Returns:
+        Selected occurrences in chronological order.
+    """
+    n = len(occurrences)
+    if budget >= n:
+        return list(occurrences)
+    if budget <= 0:
+        return []
+
+    selected_indices = set()
+
+    # Always include first occurrence
+    selected_indices.add(0)
+
+    # Include last if budget allows
+    if budget >= 2:
+        selected_indices.add(n - 1)
+
+    # Fill remaining budget with evenly spaced middle occurrences
+    remaining = budget - len(selected_indices)
+    if remaining > 0 and n > 2:
+        middle_indices = list(range(1, n - 1))
+        step = len(middle_indices) / (remaining + 1)
+        for i in range(remaining):
+            pick = int(round(step * (i + 1))) - 1
+            pick = max(0, min(pick, len(middle_indices) - 1))
+            selected_indices.add(middle_indices[pick])
+
+    return [occurrences[i] for i in sorted(selected_indices)]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate FCP XML for B-Roll placement in DaVinci Resolve',
@@ -313,7 +398,7 @@ Example:
 
 After generating the XML:
     1. Open DaVinci Resolve
-    2. File > Import > Timeline... 
+    2. File > Import > Timeline...
     3. Select the generated XML file
     4. Relink media if needed (right-click clips > Relink Selected Clips)
         """
@@ -338,6 +423,12 @@ After generating the XML:
                         help='Name for the timeline (default: B-Roll Timeline)')
     parser.add_argument('--montage-clip-duration', type=float, default=0.6,
                         help='Duration per image in montage sequence (default: 0.6s)')
+    parser.add_argument('--max-placements', type=int, default=3,
+                        help='Max clip placements per entity on timeline (default: 3)')
+    parser.add_argument('--pervasive-max', type=int, default=2,
+                        help='Max placements for pervasive/background entities (default: 2)')
+    parser.add_argument('--summary',
+                        help='Path to transcript_summary.json (for pervasive entity list)')
 
     args = parser.parse_args()
     
@@ -354,6 +445,25 @@ After generating the XML:
     if not entities:
         print("ERROR: No 'entities' found in JSON", file=sys.stderr)
         sys.exit(1)
+
+    # Load transcript summary for pervasive entities list
+    pervasive_entities = []
+    summary_path = getattr(args, 'summary', None)
+    if not summary_path:
+        # Auto-detect: look in same directory as input
+        candidate = input_path.parent / "transcript_summary.json"
+        if candidate.exists():
+            summary_path = str(candidate)
+
+    if summary_path and Path(summary_path).exists():
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                summary_data = json.load(f)
+            pervasive_entities = summary_data.get('pervasive_entities', [])
+            if pervasive_entities:
+                print(f"Loaded {len(pervasive_entities)} pervasive entities from summary")
+        except Exception as e:
+            print(f"WARNING: Failed to load summary: {e}", file=sys.stderr)
 
     # Filter entities by match quality
     excluded_entities = []
@@ -375,10 +485,19 @@ After generating the XML:
             continue
         qualified_entities[entity_name] = payload
 
+    # Calculate placement budgets (frequency capping)
+    budgets = calculate_placement_budgets(
+        qualified_entities,
+        pervasive_entities,
+        max_placements=args.max_placements,
+        pervasive_max=args.pervasive_max,
+    )
+
     # Build list of clips with timecodes
     clips = []
     montage_count = 0
     montage_clip_frames = seconds_to_frames(args.montage_clip_duration, args.fps)
+    capped_entities = 0
 
     for entity_name, payload in qualified_entities.items():
         images = payload.get('images', [])
@@ -396,12 +515,20 @@ After generating the XML:
         if not filtered_images:
             continue
 
+        # Apply frequency capping: select which occurrences to use
+        budget = budgets.get(entity_name, len(occurrences))
+        if budget < len(occurrences):
+            selected_occurrences = select_occurrences(occurrences, budget)
+            capped_entities += 1
+        else:
+            selected_occurrences = occurrences
+
         # Check if this is a montage entity
         is_montage = payload.get('is_montage', False)
         montage_image_count = payload.get('montage_image_count', len(filtered_images))
 
-        # Round-robin through images for each occurrence
-        for idx, occ in enumerate(occurrences):
+        # Round-robin through images for each selected occurrence
+        for idx, occ in enumerate(selected_occurrences):
             tc = occ.get('timecode')
             if not tc:
                 continue
@@ -538,6 +665,16 @@ After generating the XML:
     print(f"  Using rotation: {len(entities_with_rotation)}")
     if montage_count > 0:
         print(f"  Montage sequences: {montage_count} (rapid {args.montage_clip_duration}s clips)")
+
+    # Frequency capping stats
+    if capped_entities > 0:
+        print(f"\nFrequency capping:")
+        print(f"  Entities capped: {capped_entities}")
+        print(f"  Max placements: {args.max_placements} (pervasive: {args.pervasive_max})")
+        if pervasive_entities:
+            print(f"  Pervasive entities: {', '.join(pervasive_entities[:5])}")
+            if len(pervasive_entities) > 5:
+                print(f"    ... and {len(pervasive_entities) - 5} more")
 
     # Log excluded entities
     if excluded_entities:

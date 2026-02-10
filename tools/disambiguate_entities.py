@@ -153,6 +153,7 @@ def disambiguate_single_entity(
     overrides: dict,
     idx: int,
     total: int,
+    era: str = "",
 ) -> Tuple[str, Optional[dict]]:
     """
     Run disambiguation for a single entity.
@@ -209,6 +210,7 @@ def disambiguate_single_entity(
             session=session,
             client=client,
             cache=cache,
+            era=era,
         )
     except Exception as e:
         safe_print(f"[{idx}/{total}] Disambiguation failed for {entity_name}: {e}")
@@ -299,6 +301,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             video_topic = "Unknown video"
 
+    # Load transcript summary for era context
+    era = ""
+    summary_path = Path(args.map).parent / "transcript_summary.json"
+    if summary_path.exists():
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary_data = json.load(f)
+            era = summary_data.get("era", "")
+            # Upgrade video_topic with richer summary topic
+            summary_topic = summary_data.get("topic", "")
+            if summary_topic:
+                video_topic = summary_topic
+            if era:
+                print(f"Using era context: {era}")
+        except Exception as e:
+            print(f"Warning: Failed to load summary: {e}", file=sys.stderr)
+
     # Filter entities that need disambiguation
     to_disambiguate = []
     skipped = []
@@ -356,6 +375,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 overrides=overrides,
                 idx=idx,
                 total=total,
+                era=era,
             )
             futures[future] = entity_name
 

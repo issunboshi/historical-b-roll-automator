@@ -2,6 +2,8 @@
 
 **Version:** 1.0
 **Date:** 2026-02-03
+**Status:** On hold — spec for future monorepo, not yet implemented
+**Archived:** 2026-02-10
 **Purpose:** Shared spec for integrating services into the YouTube Toolkit monorepo
 
 ---

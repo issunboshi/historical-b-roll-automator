@@ -1,0 +1,22 @@
+# .dockerignore
+__pycache__/
+*.py[cod]
+*$py.class
+.git/
+.gitignore
+.env
+.env.*
+docs/
+CLAUDE.md
+tests/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+fly.toml
+.wikipedia_image_downloader.ini

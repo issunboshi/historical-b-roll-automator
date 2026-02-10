@@ -19,6 +19,11 @@ from src.core.disambiguation import (
     log_disambiguation_decision,
     process_disambiguation_result,
 )
+from src.core.executor import (
+    STEPS,
+    PipelineExecutor,
+    StepResult,
+)
 from src.core.review import (
     write_review_file,
     load_overrides,
@@ -30,6 +35,7 @@ __all__ = [
     # Constants
     "WIKIPEDIA_API",
     "USER_AGENT",
+    "STEPS",
     # Main disambiguation functions
     "disambiguate_search_results",
     "disambiguate_entity",
@@ -43,6 +49,9 @@ __all__ = [
     "apply_confidence_routing",
     "log_disambiguation_decision",
     "process_disambiguation_result",
+    # Pipeline executor
+    "PipelineExecutor",
+    "StepResult",
     # Review and override
     "write_review_file",
     "load_overrides",

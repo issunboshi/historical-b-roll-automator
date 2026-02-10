@@ -1,19 +1,30 @@
 ## B-Roll Automater
 
-Automated b-roll generation pipeline that extracts named entities from video transcripts and downloads representative Wikipedia images for use as picture-in-picture overlays in DaVinci Resolve.
+Automated b-roll generation pipeline that extracts named entities from video transcripts, downloads representative Wikipedia images, and generates FCP 7 XML timelines for import into DaVinci Resolve as picture-in-picture overlays.
 
-**v1 features:**
-- LLM-powered entity extraction from SRT transcripts
-- Context-aware Wikipedia disambiguation with confidence scoring
-- Priority-based filtering (people > events > concepts > places)
-- Image variety through round-robin rotation for multi-mention entities
-- Quality-based timeline filtering
-- FCP 7 XML output for DaVinci Resolve import
+### Features
+
+- **LLM-powered entity extraction** from SRT transcripts (OpenAI or Ollama)
+- **Visual element detection** — stats, quotes, processes, comparisons extracted for on-screen graphics
+- **Transcript summarization** — auto-detects video era, topic, pervasive entities, and spelling-variant clusters
+- **Entity deduplication** — merges transcription variants (e.g. "Pandey" / "Mangal Pandey" / "Mandel Pandey") using LLM-identified clusters and fuzzy matching
+- **Montage detection** — identifies dense entity sequences suitable for rapid-fire image collages
+- **Context-aware Wikipedia disambiguation** with era/chronological awareness and confidence scoring
+- **LLM-generated search strategies** — contextual Wikipedia queries with era and pervasive-entity guidance
+- **Priority-based filtering** — people > events > concepts > places, with mention count and position weighting
+- **Frequency capping** — limits clip placements per entity to prevent timeline flooding from pervasive entities
+- **Era-aware image ordering** — prioritizes historically appropriate images when year metadata is available
+- **Image variety** through round-robin rotation for multi-mention entities
+- **Quality-based timeline filtering**
+- **FCP 7 XML output** for DaVinci Resolve import
+- **Pipeline checkpointing** — resume interrupted runs from any step
+
+---
 
 ### Requirements
 
 - Python 3.9+ (tested with 3.11/3.12/3.13)
-- Dependencies: `requests`, `beautifulsoup4`, `pydantic`, `anthropic`, `openai`
+- Dependencies: `requests`, `beautifulsoup4`, `pydantic`, `anthropic`, `cairosvg`, `diskcache`, `tenacity`, `pyyaml`
 
 Install dependencies:
 
@@ -23,12 +34,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Environment Variables
+### API Keys
+
+Create `.wikipedia_image_downloader.ini` in the project root (or set environment variables):
+
+```ini
+[settings]
+ANTHROPIC_API_KEY = sk-ant-...
+OPENAI_API_KEY = sk-...
+WIKIPEDIA_API_ACCESS_TOKEN = ...
+output_dir = /Users/you/Downloads/WikiImages
+```
+
+Or export directly:
 
 ```bash
-export OPENAI_API_KEY="sk-..."      # Required for entity extraction
-export ANTHROPIC_API_KEY="sk-..."   # Required for search strategies and disambiguation
+export OPENAI_API_KEY="sk-..."          # Entity extraction (provider=openai)
+export ANTHROPIC_API_KEY="sk-ant-..."   # Search strategies, disambiguation, summarization
+export WIKIPEDIA_API_ACCESS_TOKEN="..." # Authenticated Wikipedia API (5000 req/hr vs 500)
 ```
+
+Config values are loaded automatically by `config.py`. Environment variables take precedence over INI file values.
 
 ---
 
@@ -40,61 +66,110 @@ Run the full pipeline with a single command:
 python broll.py pipeline --srt video.srt --subject "Documentary about the American Revolution"
 ```
 
-This runs 5 steps automatically:
-1. **Extract** — Parse SRT, extract entities using LLM
-2. **Enrich** — Add priority scores and transcript context
-3. **Strategies** — Generate LLM-powered Wikipedia search queries
-4. **Download** — Fetch images with disambiguation
-5. **XML** — Generate FCP 7 timeline for DaVinci Resolve
+This runs 11 steps automatically:
 
-Output files are created in a directory named after your SRT file.
+1. **Extract** — Parse SRT, extract named entities using LLM
+2. **Extract-Visuals** — Detect stats, quotes, processes, comparisons for on-screen graphics
+3. **Enrich** — Add priority scores and transcript context
+4. **Summarize** — LLM-powered analysis of topic, era, pervasive entities, and entity clusters
+5. **Merge-Entities** — Deduplicate transcription variants using clusters and fuzzy matching
+6. **Montages** — Detect dense entity sequences for rapid-fire collage opportunities
+7. **Strategies** — Generate LLM-powered Wikipedia search queries with era context
+8. **Disambiguate** — Pre-compute Wikipedia disambiguation with chronological awareness
+9. **Download** — Fetch images with era-aware ordering
+10. **Markers** — Generate DaVinci Resolve markers
+11. **XML** — Generate FCP 7 timeline with frequency capping
+
+Output files are created in a directory named after your SRT file (or use `--output-dir`).
 
 ---
 
-## Pipeline Commands
-
-### Full Pipeline
+## Pipeline Options
 
 ```bash
 python broll.py pipeline --srt video.srt [options]
 ```
 
-**Required:**
-- `--srt PATH` — Path to SRT transcript
-- `--output-dir PATH` — Output directory for all pipeline files (images, JSON, XML)
+### Required
 
-**Common options:**
-- `--subject TEXT` — Topic/context for better disambiguation (recommended)
-- `--fps N` — Timeline frame rate (default: from config or 24)
-- `--min-priority N` — Skip entities below this priority (default: 0.5, 0 disables)
-- `--min-match-quality {high,medium,low,none}` — Timeline quality filter (default: high)
-- `-v, --verbose` — Show per-entity processing details
+| Flag | Description |
+|------|-------------|
+| `--srt PATH` | Path to SRT transcript |
 
-**Advanced options:**
-- `--images-per-entity N` — Max images per entity (default: 3, auto-elevated to 5 for 3+ mentions)
-- `--batch-size N` — Entities per LLM call for strategies (default: 7)
-- `-j, --parallel N` — Parallel download threads (default: 4)
-- `--duration N` — Clip duration in seconds
-- `--gap N` — Minimum gap between clips
-- `--tracks N` — Number of b-roll tracks
-- `--allow-non-pd` — Include non-public-domain images
-- `--timeline-name TEXT` — Custom name for the timeline
+### Common Options
 
-**Rate limiting:**
-- `--extract-delay SECONDS` — Delay between LLM API calls (default: 0.2)
-- `--download-delay SECONDS` — Delay between Wikipedia requests (default: 0.1)
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output-dir, -o PATH` | SRT filename | Output directory |
+| `--subject TEXT` | — | Transcript subject for entity context |
+| `--fps N` | 24 | Timeline frame rate |
+| `--min-priority N` | 0.5 | Skip entities below this priority (0 disables) |
+| `--min-match-quality` | high | Timeline quality filter: `high`, `medium`, `low`, `none` |
+| `-v, --verbose` | — | Show per-entity processing details |
 
-**LLM options:**
-- `--provider {openai,ollama}` — LLM provider for extraction
-- `--model NAME` — LLM model name
+### Era & Quality Control
 
-**Processing options:**
-- `--no-svg-to-png` — Disable SVG to PNG conversion
-- `--cache-dir PATH` — Wikipedia validation cache directory
-- `--resume` — Resume from last completed step
-- `--from-step {extract,enrich,strategies,download,xml}` — Start from specific step
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--era TEXT` | auto-detected | Override video era (e.g. `"1857, mid-19th century India"`) |
+| `--pervasive-entities TEXT` | auto-detected | Comma-separated override list of pervasive entities |
+| `--max-placements N` | 3 | Max clip placements per entity on timeline |
+| `--pervasive-max N` | 2 | Max placements for pervasive/background entities |
+| `--skip-summary` | — | Skip the transcript summary step |
 
-### Individual Steps
+### Visual Elements & Montages
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--skip-visuals` | — | Skip visual element extraction |
+| `--visuals-batch-size N` | 5 | Cues per LLM call for visual extraction |
+| `--skip-montages` | — | Skip montage detection |
+| `--montage-window N` | 8.0 | Time window (seconds) for montage density detection |
+| `--montage-min-entities N` | 3 | Minimum entities for montage detection |
+| `--montage-clip-duration N` | 0.6 | Duration per image in montage sequences |
+
+### Timeline & Images
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--images-per-entity N` | 3 | Max images per entity (auto-elevated to 5 for 3+ mentions) |
+| `--duration, -d N` | — | Clip duration in seconds |
+| `--gap, -g N` | — | Min gap between clips in seconds |
+| `--tracks, -t N` | — | Number of b-roll tracks |
+| `--allow-non-pd` | — | Include non-public-domain images |
+| `--timeline-name TEXT` | — | Custom timeline name |
+
+### Parallelism & Rate Limiting
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-j, --parallel N` | 10 | Parallel download threads |
+| `--disambig-parallel N` | 10 | Parallel disambiguation workers |
+| `--extract-delay N` | 0.2 | Delay between LLM API calls (seconds) |
+| `--download-delay N` | 0.1 | Delay between Wikipedia requests (seconds) |
+
+### LLM & Processing
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider` | openai | LLM provider: `openai` or `ollama` |
+| `--model NAME` | — | LLM model name |
+| `--batch-size N` | 7 | Entities per LLM call for strategies |
+| `--no-svg-to-png` | — | Disable SVG to PNG conversion |
+| `--cache-dir PATH` | /tmp/wikipedia_cache | Wikipedia validation cache |
+
+### Checkpointing
+
+| Flag | Description |
+|------|-------------|
+| `--resume` | Resume from last completed step (uses `.broll_checkpoint.json`) |
+| `--from-step STEP` | Start from specific step (ignores checkpoint) |
+
+Valid steps: `extract`, `extract-visuals`, `enrich`, `summarize`, `merge-entities`, `montages`, `strategies`, `disambiguate`, `download`, `markers`, `xml`
+
+---
+
+## Individual Commands
 
 Run steps separately for debugging or custom workflows:
 
@@ -102,74 +177,190 @@ Run steps separately for debugging or custom workflows:
 # 1. Extract entities from transcript
 python broll.py extract --srt video.srt --output entities_map.json
 
-# 2. Enrich with priority and context
+# 2. Extract visual elements (stats, quotes, processes)
+python broll.py extract-visuals --srt video.srt --context "Topic of the video"
+
+# 3. Enrich with priority and context
 python broll.py enrich --map entities_map.json --srt video.srt
 
-# 3. Generate search strategies
-python broll.py strategies --map enriched_entities.json --video-context "Topic"
+# 4. Generate transcript summary (topic, era, clusters)
+python broll.py summarize --map enriched_entities.json --srt video.srt
 
-# 4. Download images
+# 5. Merge duplicate entities
+python broll.py merge-entities --map enriched_entities.json --summary transcript_summary.json
+
+# 6. Detect montage opportunities
+python broll.py montages --entities enriched_entities.json --srt video.srt
+
+# 7. Generate search strategies
+python broll.py strategies --map merged_entities.json --video-context "Topic" --era "1850s"
+
+# 8. Pre-compute disambiguation
+python broll.py disambiguate --map strategies_entities.json -j 10
+
+# 9. Download images
 python broll.py download --map strategies_entities.json --min-priority 0.5 -v
 
-# 5. Generate timeline XML
-python broll.py xml --map strategies_entities.json --min-match-quality high
+# 10. Generate timeline XML
+python broll.py xml --map strategies_entities.json --max-placements 3 --pervasive-max 2
 ```
 
-#### Extract options
-- `--srt PATH` — Path to SRT transcript (required)
-- `--output, -o PATH` — Output JSON path
-- `--output-dir PATH` — Output directory (creates entities_map.json inside)
-- `--fps N` — FPS for timecode conversion
-- `--subject TEXT` — Transcript subject for entity context
-- `--provider {openai,ollama}` — LLM provider
-- `--model NAME` — LLM model name
-- `--delay SECONDS` — Delay between LLM calls
+### Command Reference
 
-#### Enrich options
-- `--map PATH` — Path to entities_map.json (required)
-- `--srt PATH` — Path to original SRT file (required)
-- `--output, -o PATH` — Output JSON path (default: enriched_entities.json)
+#### extract
+| Flag | Description |
+|------|-------------|
+| `--srt PATH` | Path to SRT transcript (required) |
+| `--output, -o PATH` | Output JSON path |
+| `--output-dir PATH` | Output directory |
+| `--fps N` | FPS for timecode conversion |
+| `--subject TEXT` | Transcript subject for entity context |
+| `--provider {openai,ollama}` | LLM provider |
+| `--model NAME` | LLM model name |
+| `--delay N` | Delay between LLM calls |
 
-#### Strategies options
-- `--map PATH` — Path to enriched_entities.json (required)
-- `--output, -o PATH` — Output JSON path
-- `--video-context TEXT` — Video topic/title for disambiguation
-- `--batch-size N` — Entities per LLM call (5-10)
-- `--cache-dir PATH` — Wikipedia validation cache directory
+#### extract-visuals
+| Flag | Description |
+|------|-------------|
+| `--srt PATH` | Path to SRT transcript (required) |
+| `--output, -o PATH` | Output JSON path |
+| `--output-dir PATH` | Output directory |
+| `--fps N` | FPS for timecode conversion |
+| `--context TEXT` | Video topic/context |
+| `--provider {anthropic,openai}` | LLM provider (default: anthropic) |
+| `--model NAME` | LLM model name |
+| `--delay N` | Delay between LLM calls |
+| `--batch-size N` | Cues per LLM call (default: 5) |
+| `--no-batch` | Process cues one at a time |
 
-#### Download options
-- `--map PATH` — Path to entities_map.json (required)
-- `--output-dir, -o PATH` — Output directory for downloaded images
-- `--images-per-entity N` — Max images per entity
-- `--delay SECONDS` — Delay between requests (default: 0.1)
-- `-j, --parallel N` — Parallel download threads (default: 4)
-- `--no-svg-to-png` — Disable SVG to PNG conversion
-- `--min-priority N` — Skip entities below this priority
-- `-v, --verbose` — Show per-entity details
+#### enrich
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to entities_map.json (required) |
+| `--srt PATH` | Path to original SRT file (required) |
+| `--output, -o PATH` | Output JSON path |
 
-#### XML options
-- `--map PATH` — Path to entities_map.json (required)
-- `--output, -o PATH` — Output XML path
-- `--output-dir PATH` — Output directory
-- `--fps N` — Timeline frame rate
-- `--duration, -d N` — Clip duration in seconds
-- `--gap, -g N` — Min gap between clips
-- `--tracks, -t N` — Number of B-roll tracks
-- `--allow-non-pd` — Include non-public-domain images
-- `--timeline-name TEXT` — Name for the timeline
-- `--min-match-quality {high,medium,low,none}` — Quality filter
+#### summarize
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to enriched_entities.json (required) |
+| `--srt PATH` | Path to original SRT file (required) |
+| `--output, -o PATH` | Output JSON path |
 
-### Check Status
+#### merge-entities
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to enriched_entities.json (required) |
+| `--summary PATH` | Path to transcript_summary.json |
+| `--output, -o PATH` | Output JSON path |
 
+#### montages
+| Flag | Description |
+|------|-------------|
+| `--entities PATH` | Path to entities_map.json (required) |
+| `--srt PATH` | Path to original SRT |
+| `--output, -o PATH` | Output JSON path |
+| `--window N` | Time window in seconds (default: 8.0) |
+| `--min-entities N` | Minimum entities for density montage (default: 3) |
+
+#### strategies
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to enriched/merged entities (required) |
+| `--output, -o PATH` | Output JSON path |
+| `--video-context TEXT` | Video topic for disambiguation |
+| `--batch-size N` | Entities per LLM call (5-10) |
+| `--cache-dir PATH` | Wikipedia validation cache |
+| `--era TEXT` | Era/time period for search disambiguation |
+| `--summary PATH` | Path to transcript_summary.json |
+
+#### disambiguate
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to entities_map.json (required) |
+| `-j, --disambig-parallel N` | Parallel workers (default: 10) |
+| `--min-priority N` | Minimum priority threshold |
+| `--cache-dir PATH` | Wikipedia cache directory |
+
+#### download
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to entities_map.json (required) |
+| `--output-dir, -o PATH` | Output directory for images |
+| `--images-per-entity N` | Max images per entity |
+| `--delay N` | Delay between requests (default: 0.1) |
+| `-j, --parallel N` | Parallel download threads (default: 4) |
+| `--no-svg-to-png` | Disable SVG to PNG conversion |
+| `--min-priority N` | Skip entities below this priority |
+| `-v, --verbose` | Show per-entity details |
+
+#### xml
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to entities_map.json (required) |
+| `--output, -o PATH` | Output XML path |
+| `--output-dir PATH` | Output directory |
+| `--fps N` | Timeline frame rate |
+| `--duration, -d N` | Clip duration in seconds |
+| `--gap, -g N` | Min gap between clips |
+| `--tracks, -t N` | Number of B-roll tracks |
+| `--allow-non-pd` | Include non-public-domain images |
+| `--timeline-name TEXT` | Custom timeline name |
+| `--min-match-quality` | Quality filter: `high`, `medium`, `low`, `none` |
+| `--montage-clip-duration N` | Duration per montage image (default: 0.6s) |
+| `--max-placements N` | Max clip placements per entity (default: 3) |
+| `--pervasive-max N` | Max placements for pervasive entities (default: 2) |
+| `--summary-file PATH` | Path to transcript_summary.json |
+
+#### status
 ```bash
 python broll.py status
 ```
-
 Shows configuration, environment variables, and script availability.
 
 ---
 
 ## How It Works
+
+### Pipeline Data Flow
+
+```
+SRT transcript
+  |
+  v
+extract -----------> entities_map.json
+  |
+  v
+extract-visuals ----> visual_elements.json
+  |
+  v
+enrich -------------> enriched_entities.json
+  |
+  v
+summarize ----------> transcript_summary.json
+  |                   (topic, era, pervasive entities, entity clusters)
+  v
+merge-entities -----> merged_entities.json
+  |                   (deduplicated entities)
+  v
+montages -----------> montages.json
+  |
+  v
+strategies ---------> strategies_entities.json
+  |                   (era-aware search queries)
+  v
+disambiguate -------> strategies_entities.json (updated)
+  |                   (era-aware disambiguation)
+  v
+download -----------> strategies_entities.json (updated) + images/
+  |                   (era-aware image ordering)
+  v
+markers ------------> DaVinci Resolve markers
+  |
+  v
+xml ----------------> broll_timeline.xml
+                      (frequency-capped FCP 7 XML)
+```
 
 ### Entity Prioritization
 
@@ -180,24 +371,66 @@ Entities are scored based on:
 
 Entities below `--min-priority` threshold are skipped during download.
 
+### Transcript Summarization
+
+A single LLM call analyzes the entity list and sampled transcript cues to produce:
+- **Topic**: What the video is about
+- **Era**: Time period and geographic context (e.g. "1857, British colonial India")
+- **Era year range**: Numeric bounds for image date filtering (e.g. [1850, 1860])
+- **Pervasive entities**: Background/setting entities that are too broad for useful b-roll (e.g. "United Kingdom", "India")
+- **Entity clusters**: Groups of spelling variants that should be merged (e.g. ["Mangal Pandey", "Pandey", "Mandel Pandey"])
+
+This information flows downstream to improve search strategies, disambiguation accuracy, image ordering, and frequency capping.
+
+### Entity Deduplication
+
+Transcription errors often produce multiple entries for the same entity. The merge step combines them:
+1. **Cluster-based merging**: Uses LLM-identified clusters from the transcript summary
+2. **Fuzzy fallback**: When no summary exists, uses string similarity (threshold: 0.85) and substring containment for same-type entities
+3. **Merge behavior**: Combines occurrences (deduped by timecode), unions aliases, takes max priority, concatenates contexts
+
 ### Search Strategies
 
-Instead of naive Wikipedia searches, the LLM generates 2-3 contextual search queries per entity. For example:
+Instead of naive Wikipedia searches, the LLM generates 2-3 contextual search queries per entity with era awareness:
 
-- Entity: "William Dawes"
-- Context: American Revolution documentary
-- Strategies: ["William Dawes American Revolution", "William Dawes midnight ride", "William Dawes patriot"]
+- Entity: "Ernest Jones"
+- Era: "1857, mid-19th century"
+- Strategies: ["Ernest Jones Chartist", "Ernest Charles Jones 1850s", "Ernest Jones poet politician"]
+
+For pervasive entities, the LLM redirects to contextually relevant articles:
+- "United Kingdom" in an 1857 India context → "British Raj", "Company rule in India"
 
 ### Disambiguation
 
 When Wikipedia returns multiple results:
 1. Fetch summaries for top 3 candidates
-2. LLM compares against transcript context
+2. LLM compares against transcript context **and era** — a person born after the video's era cannot be the correct match
 3. Assigns confidence score (0-10)
 4. Routes based on confidence:
    - **7-10**: Auto-accept, download images
    - **4-6**: Flag for review, still download
    - **0-3**: Skip entity entirely
+
+### Frequency Capping
+
+Prevents pervasive entities from flooding the timeline:
+- **Pervasive entities** (auto-detected 10+ mentions, or from summary): max 2 placements
+- **High-priority** (>= 0.8): up to 3 placements
+- **Medium-priority** (0.5-0.8): up to 2 placements
+- **Low-priority** (< 0.5): 1 placement
+- **Single-occurrence**: always 1
+
+When budget < total occurrences, placements are distributed: first mention (introduction), last mention, then evenly spaced through the middle.
+
+### Era-Aware Image Ordering
+
+When era year range is available, downloaded images are reordered:
+1. Images from within the era range (sorted by closeness to midpoint)
+2. Images from adjacent eras (within 50 years)
+3. Other dated images
+4. Unknown-year images
+
+This prevents anachronistic images (e.g. a modern hockey team photo for "India" in an 1857 documentary).
 
 ### Image Variety
 
@@ -221,14 +454,19 @@ Timeline generation filters by match quality:
 After running the pipeline:
 
 ```
-video/
-  entities_map.json         # Raw extracted entities
-  enriched_entities.json    # With priority and context
-  strategies_entities.json  # With search strategies and images
-  broll_timeline.xml        # FCP 7 XML for DaVinci Resolve
-  broll_timeline.excluded.json  # Entities excluded by quality filter
-  disambiguation_review.json    # Entities flagged for human review
-  images/                   # Downloaded images organized by license
+output_dir/
+  entities_map.json              # Raw extracted entities
+  visual_elements.json           # Stats, quotes, processes, comparisons
+  enriched_entities.json         # With priority scores and context
+  transcript_summary.json        # Topic, era, pervasive entities, clusters
+  merged_entities.json           # Deduplicated entities
+  montages.json                  # Montage/collage opportunities
+  strategies_entities.json       # With search strategies, disambiguation, images
+  broll_timeline.xml             # FCP 7 XML for DaVinci Resolve
+  broll_timeline.excluded.json   # Entities excluded by quality filter
+  disambiguation_review.json     # Entities flagged for human review
+  .broll_checkpoint.json         # Pipeline checkpoint state
+  images/                        # Downloaded images organized by license
     public_domain/
     cc_by/
     cc_by_sa/
@@ -240,9 +478,9 @@ video/
 ### Importing to DaVinci Resolve
 
 1. Open DaVinci Resolve
-2. File → Import → Timeline → Import AAF, EDL, XML...
+2. File > Import > Timeline > Import AAF, EDL, XML...
 3. Select `broll_timeline.xml`
-4. Images are referenced by path; ensure the images folder is accessible
+4. Images are referenced by absolute path — ensure the images folder is accessible
 
 The generated FCP 7 XML uses DaVinci-compatible file references:
 - Still images use `duration=1` (single frame) matching DaVinci's expectation
@@ -273,6 +511,123 @@ Override with CLI flags or environment variables.
 
 ---
 
+## REST API
+
+A FastAPI-based REST API provides remote access to the pipeline. This is useful for integrating with web UIs, remote servers, or automated workflows.
+
+### Running the API Server
+
+```bash
+# Development (with auto-reload)
+uvicorn src.api.main:app --reload --port 8001
+
+# Production
+uvicorn src.api.main:app --host 0.0.0.0 --port 8001
+
+# Docker
+docker build -t broll-finder .
+docker run -p 8001:8001 \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e OPENAI_API_KEY="sk-..." \
+  broll-finder
+```
+
+Interactive API docs are available at `http://localhost:8001/docs` (Swagger UI).
+
+### API Endpoints
+
+#### Health & Discovery
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Basic health check |
+| `GET` | `/health/detailed` | Health check with environment info (API key status, Python version) |
+| `GET` | `/ready` | Readiness check (verifies LLM provider credentials) |
+| `GET` | `/info` | Service metadata and available endpoints |
+
+#### Pipeline
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/pipeline/start` | Start pipeline with server-side SRT path |
+| `POST` | `/api/v1/pipeline/upload` | Upload SRT file and start pipeline |
+| `GET` | `/api/v1/pipeline/{id}` | Check pipeline status and progress |
+| `GET` | `/api/v1/pipeline/{id}/result` | Get results (entities path, XML path, counts) |
+| `DELETE` | `/api/v1/pipeline/{id}` | Cancel a running pipeline |
+
+#### Disambiguation
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/disambiguate` | Disambiguate a single entity against Wikipedia |
+| `POST` | `/api/v1/search-candidates` | Search Wikipedia for candidate articles |
+| `GET` | `/api/v1/candidate/{title}` | Get detailed info about a Wikipedia article |
+
+### Usage Examples
+
+**Start pipeline with a local SRT file:**
+
+```bash
+curl -X POST http://localhost:8001/api/v1/pipeline/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "srt_path": "/path/to/video.srt",
+    "config": {"output_dir": "/path/to/output"}
+  }'
+```
+
+**Upload SRT file from a remote client:**
+
+```bash
+curl -X POST http://localhost:8001/api/v1/pipeline/upload \
+  -F "file=@my_video.srt" \
+  -F "output_dir=/path/to/output"
+```
+
+**Check pipeline status:**
+
+```bash
+curl http://localhost:8001/api/v1/pipeline/{pipeline_id}
+```
+
+**Disambiguate a single entity:**
+
+```bash
+curl -X POST http://localhost:8001/api/v1/disambiguate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_name": "Ernest Jones",
+    "entity_type": "people",
+    "transcript_context": "the Chartist leader Ernest Jones gave speeches...",
+    "video_topic": "The Indian Rebellion of 1857"
+  }'
+```
+
+### Docker
+
+The included `Dockerfile` builds a production-ready image:
+
+```bash
+docker build -t broll-finder .
+docker run -p 8001:8001 \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e OPENAI_API_KEY="sk-..." \
+  -v /path/to/output:/app/output \
+  broll-finder
+```
+
+The container exposes port 8001 and includes a health check at `/health`.
+
+### CORS
+
+By default, all origins are allowed. Set `CORS_ORIGINS` environment variable to restrict:
+
+```bash
+CORS_ORIGINS="http://localhost:3000,https://myapp.com" uvicorn src.api.main:app
+```
+
+---
+
 ## Wikipedia Image Downloader (Standalone)
 
 The underlying Wikipedia downloader can be used independently:
@@ -286,6 +641,8 @@ python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 - `--limit N` — Number of images to download (default: 10)
 - `--output PATH` — Output directory
 - `--user-agent STRING` — Custom HTTP User-Agent
+- `--era-start YEAR` — Start of era range for image ordering
+- `--era-end YEAR` — End of era range for image ordering
 
 ### Output Directory Resolution
 
@@ -299,11 +656,6 @@ python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 - `./.wikipedia_image_downloader.ini`
 - `~/.wikipedia_image_downloader.ini`
 - `~/.config/wikipedia_image_downloader/config.ini`
-
-```ini
-[settings]
-output_dir = /Users/you/Downloads/WikiImages
-```
 
 ### SVG to PNG Conversion
 
@@ -320,8 +672,9 @@ output_dir = /Users/you/Downloads/WikiImages
 
 ### Image Ordering
 
-- `--prefer-recent` — Prioritize newer images first when year can be inferred
+- `--prefer-recent` — Prioritize newer images first
 - `--no-historical-priority` — Disable older-first reordering; keep source order
+- `--era-start YEAR --era-end YEAR` — Prioritize images from within the specified era
 
 ---
 
@@ -343,7 +696,7 @@ Attribution files are created for non-public-domain images.
 
 ### "ANTHROPIC_API_KEY not set"
 
-The search strategies and disambiguation features require Claude. Set:
+The search strategies, disambiguation, and summarization features require Claude:
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
@@ -353,6 +706,35 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 1. Provide `--subject` with transcript context
 2. Lower `--min-priority` to include more entities
 3. Lower `--min-match-quality` to include uncertain matches
+4. Use `--era` to help disambiguation with historical content
+
+### Wrong-era disambiguations
+
+For historical content, the `--era` flag helps the LLM prefer chronologically appropriate matches:
+```bash
+python broll.py pipeline --srt video.srt --era "1857, mid-19th century India"
+```
+
+Without `--era`, the summarize step will auto-detect the era from transcript content.
+
+### Too many clips for common entities
+
+Use frequency capping flags:
+```bash
+python broll.py pipeline --srt video.srt --max-placements 3 --pervasive-max 2
+```
+
+Or override pervasive entities:
+```bash
+python broll.py pipeline --srt video.srt --pervasive-entities "United Kingdom,India"
+```
+
+### Duplicate entities from transcription errors
+
+The merge-entities step handles this automatically. If auto-detection misses variants, re-run from summarize:
+```bash
+python broll.py pipeline --srt video.srt --from-step summarize
+```
 
 ### Missing images in timeline
 
@@ -360,21 +742,29 @@ Check `broll_timeline.excluded.json` for entities filtered by quality threshold.
 
 ### Review flagged entities
 
-Check `disambiguation_review.json` for entities that need human verification. Create `disambiguation_overrides.json` to provide manual corrections:
+Check `disambiguation_review.json` for entities that need human verification. Create `output/disambiguation_overrides.json` to provide manual corrections:
 
 ```json
 {
-  "William Dawes": "William Dawes (soldier)"
+  "William Dawes": "William Dawes (soldier)",
+  "Ernest Jones": "Ernest Jones (Chartist)"
 }
+```
+
+Then re-run from the disambiguate step:
+```bash
+python broll.py pipeline --srt video.srt --from-step disambiguate
 ```
 
 ---
 
 ## Development
 
+Design documents in `docs/plans/` (active plans in root, completed/abandoned in `archive/`):
+
+See [`docs/plans/README.md`](docs/plans/README.md) for full index.
+
 Project planning files in `.planning/`:
 - `PROJECT.md` — Project overview and requirements
-- `MILESTONES.md` — Shipped version history
+- `MILESTONES.md` — Shipped version history (v1, v2)
 - `STATE.md` — Current development state
-
-See `.planning/milestones/` for archived roadmaps and requirements.

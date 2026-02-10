@@ -343,25 +343,59 @@ def infer_image_year(title_key: str, extmetadata: Dict) -> Optional[int]:
     return min(candidates)
 
 
-def reorder_by_historical_priority(all_titles: List[str], metadata_map: Dict[str, Dict]) -> List[str]:
+def reorder_by_historical_priority(
+    all_titles: List[str],
+    metadata_map: Dict[str, Dict],
+    era_year_range: Optional[Tuple[int, int]] = None,
+) -> List[str]:
     """
     Reorder to prefer older images first (<= current_year - 30).
     Within historical group, older years first; then newer; unknown last.
+
+    If era_year_range is provided, prioritize images from within that era:
+    1. Images from within the era range (sorted by closeness to midpoint)
+    2. Images from adjacent eras (within 50 years)
+    3. Other dated images
+    4. Unknown-year images
     """
-    current_year = datetime.datetime.now().year
-    cutoff = current_year - 30
-    scored: List[Tuple[int, int, int, str]] = []
     LARGE = 999999
-    for i, t in enumerate(all_titles):
-        meta = metadata_map.get(t) or {}
-        extmeta = meta.get("extmetadata", {}) or {}
-        y = infer_image_year(t, extmeta)
-        if y is not None and y <= cutoff:
-            scored.append((0, y, i, t))
-        elif y is not None:
-            scored.append((1, y, i, t))
-        else:
-            scored.append((2, LARGE, i, t))
+    scored: List[Tuple[int, int, int, str]] = []
+
+    if era_year_range:
+        era_start, era_end = era_year_range
+        era_mid = (era_start + era_end) // 2
+
+        for i, t in enumerate(all_titles):
+            meta = metadata_map.get(t) or {}
+            extmeta = meta.get("extmetadata", {}) or {}
+            y = infer_image_year(t, extmeta)
+
+            if y is not None:
+                if era_start <= y <= era_end:
+                    # Within era: sort by closeness to midpoint
+                    scored.append((0, abs(y - era_mid), i, t))
+                elif abs(y - era_mid) <= 50:
+                    # Adjacent era (within 50 years)
+                    scored.append((1, abs(y - era_mid), i, t))
+                else:
+                    # Other dated images
+                    scored.append((2, abs(y - era_mid), i, t))
+            else:
+                scored.append((3, LARGE, i, t))
+    else:
+        current_year = datetime.datetime.now().year
+        cutoff = current_year - 30
+        for i, t in enumerate(all_titles):
+            meta = metadata_map.get(t) or {}
+            extmeta = meta.get("extmetadata", {}) or {}
+            y = infer_image_year(t, extmeta)
+            if y is not None and y <= cutoff:
+                scored.append((0, y, i, t))
+            elif y is not None:
+                scored.append((1, y, i, t))
+            else:
+                scored.append((2, LARGE, i, t))
+
     scored.sort(key=lambda x: (x[0], x[1], x[2]))
     return [t for (_, _, _, t) in scored]
 
@@ -834,6 +868,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion (default: 3000).")
     parser.add_argument("--prefer-recent", action="store_true", help="Prioritize newer images first when year can be inferred.")
     parser.add_argument("--no-historical-priority", action="store_true", help="Disable older-first reordering; keep source order.")
+    parser.add_argument("--era-start", type=int, help="Start year for era-aware image prioritization.")
+    parser.add_argument("--era-end", type=int, help="End year for era-aware image prioritization.")
     args = parser.parse_args(argv)
 
     # Sanitize queries: allow users to separate with commas in shell inputs
@@ -882,6 +918,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Query metadata for all candidates so we can filter to images and still meet the limit
         metadata_map = query_image_metadata(session, all_images)
 
+        # Determine era range if provided
+        era_year_range = None
+        if args.era_start and args.era_end:
+            era_year_range = (args.era_start, args.era_end)
+
         # Reorder according to preferences
         if args.no_historical_priority and not args.prefer_recent:
             ordered_titles = all_images
@@ -890,9 +931,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             ordered_titles = reorder_by_recent_priority(all_images, metadata_map)
             print("Prioritizing recent images first (newer years preferred).")
         else:
-            ordered_titles = reorder_by_historical_priority(all_images, metadata_map)
-            cutoff_info = datetime.datetime.now().year - 30
-            print(f"Prioritizing historical images first (<= {cutoff_info}).")
+            ordered_titles = reorder_by_historical_priority(all_images, metadata_map, era_year_range=era_year_range)
+            if era_year_range:
+                print(f"Prioritizing images from era {era_year_range[0]}-{era_year_range[1]}.")
+            else:
+                cutoff_info = datetime.datetime.now().year - 30
+                print(f"Prioritizing historical images first (<= {cutoff_info}).")
 
         # Prepare root directory for this search term
         search_root = output_dir / safe_folder_name(query)

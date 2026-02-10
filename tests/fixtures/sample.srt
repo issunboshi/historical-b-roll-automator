@@ -1,0 +1,12 @@
+1
+00:00:00,000 --> 00:00:03,000
+In this video we'll talk about Albert Einstein
+and his theory of relativity.
+
+2
+00:00:03,000 --> 00:00:06,000
+Einstein was born in Germany in 1879.
+
+3
+00:00:06,000 --> 00:00:09,000
+He later moved to the United States.
