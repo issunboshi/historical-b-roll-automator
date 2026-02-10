@@ -310,6 +310,7 @@ def download_entity(
     disambiguation_overrides: Optional[dict] = None,
     video_topic: str = "Unknown video",
     session: Optional[requests.Session] = None,
+    era_year_range: Optional[Tuple[int, int]] = None,
 ) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
     Download images for a single entity with disambiguation support.
@@ -460,6 +461,11 @@ def download_entity(
                 cmd.append("--prefer-recent")
             if no_svg_to_png:
                 cmd.append("--no-svg-to-png")
+
+            # Pass era year range for era-aware image prioritization
+            if era_year_range:
+                cmd.extend(["--era-start", str(era_year_range[0]),
+                             "--era-end", str(era_year_range[1])])
 
             # Capture output to avoid interleaved console output
             subprocess.run(
@@ -678,6 +684,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             video_topic = "Unknown video"
 
+    # Load transcript summary for era context
+    era_year_range = None
+    summary_path = Path(args.map).parent / "transcript_summary.json"
+    if summary_path.exists():
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary_data = json.load(f)
+            year_range = summary_data.get("era_year_range", [])
+            if len(year_range) == 2:
+                era_year_range = (year_range[0], year_range[1])
+                print(f"Using era year range: {era_year_range[0]}-{era_year_range[1]}")
+        except Exception as e:
+            print(f"Warning: Failed to load summary: {e}", file=sys.stderr)
+
     # Apply priority filtering BEFORE parallel execution (thread-safe)
     to_download = []
     skipped_entities = []
@@ -775,6 +795,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 disambiguation_overrides=disambiguation_overrides,
                 video_topic=video_topic,
                 session=wiki_session,
+                era_year_range=era_year_range,
             )
             results[name] = (success, entity_dir, matched_term, disambiguation_result)
     else:
@@ -823,6 +844,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     disambiguation_overrides=disambiguation_overrides,
                     video_topic=video_topic,
                     session=wiki_session,
+                    era_year_range=era_year_range,
                 )
                 futures[future] = entity_name
 

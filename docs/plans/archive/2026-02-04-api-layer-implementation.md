@@ -1,6 +1,8 @@
 # API Layer Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+**Date:** 2026-02-04
+**Status:** Completed
+**Archived:** 2026-02-10
 
 **Goal:** Wire up the FastAPI endpoints to actually execute the b-roll pipeline, add OpenAPI spec generation, and prepare for Docker deployment.
 

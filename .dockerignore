@@ -6,8 +6,8 @@ __pycache__/
 .gitignore
 .env
 .env.*
-*.md
 docs/
+CLAUDE.md
 tests/
 .pytest_cache/
 .mypy_cache/
@@ -18,3 +18,5 @@ build/
 *.egg-info/
 .venv/
 venv/
+fly.toml
+.wikipedia_image_downloader.ini

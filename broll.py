@@ -119,7 +119,7 @@ CHECKPOINT_VERSION = 1
 CHECKPOINT_FILENAME = ".broll_checkpoint.json"
 
 # Pipeline step names in execution order
-PIPELINE_STEPS = ["extract", "extract-visuals", "enrich", "montages", "strategies", "disambiguate", "download", "xml"]
+PIPELINE_STEPS = ["extract", "extract-visuals", "enrich", "summarize", "merge-entities", "montages", "strategies", "disambiguate", "download", "markers", "xml"]
 
 
 def compute_srt_hash(srt_path: Path) -> str:
@@ -459,6 +459,79 @@ def cmd_enrich(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         return 1
 
 
+def cmd_summarize(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Generate transcript summary (topic, era, pervasive entities, clusters)."""
+    script = resolve_script_path("summarize_transcript.py")
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: entities file not found: {map_path}", file=sys.stderr)
+        return 1
+
+    srt_path = Path(args.srt)
+    if not srt_path.exists():
+        print(f"Error: SRT file not found: {srt_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = map_path.parent / "transcript_summary.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(script),
+        "--map", str(map_path),
+        "--srt", str(srt_path),
+        "--out", str(out_path),
+    ]
+
+    try:
+        run_step("Generating transcript summary", cmd)
+        print(f"\nTranscript summary saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Transcript summary failed: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_merge_entities(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Merge duplicate entities using summary clusters and fuzzy matching."""
+    script = resolve_script_path("merge_entities.py")
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: entities file not found: {map_path}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = map_path.parent / "merged_entities.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(script),
+        "--map", str(map_path),
+        "--out", str(out_path),
+    ]
+
+    if hasattr(args, 'summary') and args.summary:
+        cmd.extend(["--summary", str(args.summary)])
+
+    try:
+        run_step("Merging duplicate entities", cmd)
+        print(f"\nMerged entities saved to: {out_path.absolute()}")
+        return 0
+    except subprocess.CalledProcessError as e:
+        print(f"Entity merge failed: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_montages(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Detect montage/collage opportunities from entities."""
     script = resolve_script_path("detect_montages.py")
@@ -531,6 +604,14 @@ def cmd_strategies(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     if args.cache_dir:
         cmd.extend(["--cache-dir", args.cache_dir])
+
+    era = getattr(args, 'era', None)
+    if era:
+        cmd.extend(["--era", era])
+
+    summary = getattr(args, 'summary', None)
+    if summary:
+        cmd.extend(["--summary", summary])
 
     try:
         run_step("Generating search strategies", cmd)
@@ -625,6 +706,17 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if montage_duration:
         cmd.extend(["--montage-clip-duration", str(montage_duration)])
 
+    # Frequency capping args
+    max_placements = getattr(args, 'max_placements', None)
+    if max_placements:
+        cmd.extend(["--max-placements", str(max_placements)])
+    pervasive_max = getattr(args, 'pervasive_max', None)
+    if pervasive_max:
+        cmd.extend(["--pervasive-max", str(pervasive_max)])
+    summary_file = getattr(args, 'summary_file', None)
+    if summary_file:
+        cmd.extend(["--summary", str(summary_file)])
+
     try:
         run_step("Generating FCP XML timeline", cmd)
         print(f"\nXML saved to: {out_path.absolute()}")
@@ -664,7 +756,10 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     entities_path = output_dir / "entities_map.json"
     visual_elements_path = output_dir / "visual_elements.json"
     enriched_entities_path = output_dir / "enriched_entities.json"
+    summary_path = output_dir / "transcript_summary.json"
+    merged_entities_path = output_dir / "merged_entities.json"
     strategies_entities_path = output_dir / "strategies_entities.json"
+    markers_path = output_dir / "visual_markers.edl"
     xml_path = output_dir / "broll_timeline.xml"
 
     # Handle checkpointing
@@ -767,7 +862,50 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "enrich")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 4: Detect montage opportunities
+    # Step 4: Summarize transcript (topic, era, pervasive entities, clusters)
+    skip_summary = getattr(args, 'skip_summary', False)
+    if "summarize" in steps_to_run and not skip_summary:
+        summarize_args = argparse.Namespace(
+            map=str(enriched_entities_path),
+            srt=str(srt_path),
+            output=str(summary_path),
+        )
+
+        result = cmd_summarize(summarize_args, config)
+        if result != 0:
+            print("\nPipeline failed at: transcript summary", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "summarize")
+        save_checkpoint(output_dir, checkpoint)
+    elif "summarize" in steps_to_run and skip_summary:
+        print("\n[Skipping transcript summary (--skip-summary)]")
+        mark_step_completed(checkpoint, "summarize")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 5: Merge duplicate entities
+    if "merge-entities" in steps_to_run:
+        merge_args = argparse.Namespace(
+            map=str(enriched_entities_path),
+            output=str(merged_entities_path),
+            summary=str(summary_path) if summary_path.exists() else None,
+        )
+
+        result = cmd_merge_entities(merge_args, config)
+        if result != 0:
+            print("\nPipeline failed at: entity merge", file=sys.stderr)
+            save_checkpoint(output_dir, checkpoint)
+            return result
+
+        mark_step_completed(checkpoint, "merge-entities")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Determine the best entities file for downstream steps
+    # Prefer merged > enriched for strategies/disambiguate/download
+    best_entities_path = merged_entities_path if merged_entities_path.exists() else enriched_entities_path
+
+    # Step 6: Detect montage opportunities
     montages_path = output_dir / "montages.json"
     skip_montages = getattr(args, 'skip_montages', False)
     if "montages" in steps_to_run and not skip_montages:
@@ -792,14 +930,19 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "montages")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 5: Generate search strategies
+    # Step 7: Generate search strategies
     if "strategies" in steps_to_run:
+        # Use era override if provided, otherwise strategies will auto-load summary
+        era_override = getattr(args, 'era', None)
+
         strategies_args = argparse.Namespace(
-            map=str(enriched_entities_path),
+            map=str(best_entities_path),
             output=str(strategies_entities_path),
             video_context=args.subject,  # Use --subject as video context
             batch_size=getattr(args, 'batch_size', None),
             cache_dir=getattr(args, 'cache_dir', None),
+            era=era_override,
+            summary=str(summary_path) if summary_path.exists() else None,
         )
 
         result = cmd_strategies(strategies_args, config)
@@ -851,7 +994,31 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "download")
         save_checkpoint(output_dir, checkpoint)
 
-    # Step 7: Generate XML
+    # Step 7: Generate markers (if visual elements exist)
+    if "markers" in steps_to_run:
+        if visual_elements_path.exists():
+            from tools.generate_markers import main as markers_main
+
+            markers_args = [
+                str(visual_elements_path),
+                "--output", str(markers_path),
+                "--format", "edl",
+                "--fps", str(args.fps),
+                "--timeline-name", f"{args.timeline_name} - Markers",
+            ]
+
+            result = markers_main(markers_args)
+            if result != 0:
+                print("\nPipeline failed at: Marker generation", file=sys.stderr)
+                save_checkpoint(output_dir, checkpoint)
+                return result
+        else:
+            print("Skipping markers: visual_elements.json not found")
+
+        mark_step_completed(checkpoint, "markers")
+        save_checkpoint(output_dir, checkpoint)
+
+    # Step 11: Generate XML
     if "xml" in steps_to_run:
         xml_args = argparse.Namespace(
             map=str(strategies_entities_path),
@@ -865,6 +1032,9 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             timeline_name=args.timeline_name,
             min_match_quality=getattr(args, 'min_match_quality', 'high'),
             montage_clip_duration=getattr(args, 'montage_clip_duration', 0.6),
+            max_placements=getattr(args, 'max_placements', 3),
+            pervasive_max=getattr(args, 'pervasive_max', 2),
+            summary_file=str(summary_path) if summary_path.exists() else None,
         )
 
         result = cmd_xml(xml_args, config)
@@ -886,9 +1056,15 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if not skip_visuals and visual_elements_path.exists():
         print(f"#   - Visual Elements: {visual_elements_path}")
     print(f"#   - Enriched:       {enriched_entities_path}")
+    if not skip_summary and summary_path.exists():
+        print(f"#   - Summary:        {summary_path}")
+    if merged_entities_path.exists():
+        print(f"#   - Merged:         {merged_entities_path}")
     if not skip_montages and montages_path.exists():
         print(f"#   - Montages:       {montages_path}")
     print(f"#   - Strategies:     {strategies_entities_path}")
+    if markers_path.exists():
+        print(f"#   - Markers:        {markers_path}")
     print(f"#   - XML:            {xml_path}")
     print(f"#")
     print(f"# Next steps:")
@@ -930,6 +1106,8 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         ("srt_entities.py", "Entity extraction"),
         ("srt_visual_elements.py", "Visual element extraction"),
         ("enrich_entities.py", "Entity enrichment"),
+        ("summarize_transcript.py", "Transcript summary"),
+        ("merge_entities.py", "Entity merge"),
         ("detect_montages.py", "Montage detection"),
         ("generate_search_strategies.py", "Search strategy generation"),
         ("download_entities.py", "Image download"),
@@ -1025,7 +1203,7 @@ Examples:
     p_pipeline.add_argument("--resume", action="store_true",
                             help="Resume from last checkpoint (skips completed steps)")
     p_pipeline.add_argument("--from-step",
-                            choices=["extract", "extract-visuals", "enrich", "montages", "strategies", "disambiguate", "download", "xml"],
+                            choices=PIPELINE_STEPS,
                             help="Start from specific step (ignores checkpoint)")
     p_pipeline.add_argument("--skip-visuals", action="store_true",
                             help="Skip visual element extraction (stats, quotes, processes)")
@@ -1039,6 +1217,16 @@ Examples:
                             help="Skip montage/collage opportunity detection")
     p_pipeline.add_argument("--montage-clip-duration", type=float, default=0.6,
                             help="Duration per image in montage sequences (default: 0.6s)")
+    p_pipeline.add_argument("--era",
+                            help="Override video era for search/disambiguation (e.g. '1857, mid-19th century India')")
+    p_pipeline.add_argument("--pervasive-entities",
+                            help="Comma-separated override list of pervasive entities")
+    p_pipeline.add_argument("--max-placements", type=int, default=3,
+                            help="Max clip placements per entity on timeline (default: 3)")
+    p_pipeline.add_argument("--pervasive-max", type=int, default=2,
+                            help="Max placements for pervasive/background entities (default: 2)")
+    p_pipeline.add_argument("--skip-summary", action="store_true",
+                            help="Skip the transcript summary step")
 
 
     # Extract command
@@ -1096,6 +1284,24 @@ Examples:
     p_enrich.add_argument("--srt", required=True, help="Path to original SRT file")
     p_enrich.add_argument("--output", "-o", help="Output JSON path (default: enriched_entities.json)")
 
+    # Summarize command
+    p_summarize = subparsers.add_parser(
+        "summarize",
+        help="Generate transcript summary (topic, era, pervasive entities, clusters)",
+    )
+    p_summarize.add_argument("--map", required=True, help="Path to enriched_entities.json")
+    p_summarize.add_argument("--srt", required=True, help="Path to original SRT file")
+    p_summarize.add_argument("--output", "-o", help="Output JSON path")
+
+    # Merge entities command
+    p_merge = subparsers.add_parser(
+        "merge-entities",
+        help="Merge duplicate entities using summary clusters and fuzzy matching",
+    )
+    p_merge.add_argument("--map", required=True, help="Path to enriched_entities.json")
+    p_merge.add_argument("--summary", help="Path to transcript_summary.json")
+    p_merge.add_argument("--output", "-o", help="Output JSON path")
+
     # Montages command
     p_montages = subparsers.add_parser(
         "montages",
@@ -1119,6 +1325,8 @@ Examples:
     p_strategies.add_argument("--video-context", help="Video topic/title for disambiguation")
     p_strategies.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
     p_strategies.add_argument("--cache-dir", help="Wikipedia validation cache directory")
+    p_strategies.add_argument("--era", help="Era/time period for search disambiguation")
+    p_strategies.add_argument("--summary", help="Path to transcript_summary.json")
 
     # XML command
     p_xml = subparsers.add_parser(
@@ -1139,7 +1347,13 @@ Examples:
                        help="Minimum match quality to include in timeline (default: high)")
     p_xml.add_argument("--montage-clip-duration", type=float, default=0.6,
                        help="Duration per image in montage sequences (default: 0.6s)")
-    
+    p_xml.add_argument("--max-placements", type=int, default=3,
+                       help="Max clip placements per entity on timeline (default: 3)")
+    p_xml.add_argument("--pervasive-max", type=int, default=2,
+                       help="Max placements for pervasive entities (default: 2)")
+    p_xml.add_argument("--summary-file",
+                       help="Path to transcript_summary.json (for pervasive entity list)")
+
     # Disambiguate command
     p_disambig = subparsers.add_parser(
         "disambiguate",
@@ -1174,6 +1388,8 @@ Examples:
         "extract-visuals": cmd_extract_visuals,
         "download": cmd_download,
         "enrich": cmd_enrich,
+        "summarize": cmd_summarize,
+        "merge-entities": cmd_merge_entities,
         "montages": cmd_montages,
         "strategies": cmd_strategies,
         "disambiguate": cmd_disambiguate,

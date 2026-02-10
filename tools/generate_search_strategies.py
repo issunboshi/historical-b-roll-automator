@@ -201,7 +201,9 @@ def _format_entities_for_prompt(entities: List[dict]) -> str:
 def generate_batch_strategies(
     entities: List[dict],
     video_context: str,
-    client: Anthropic
+    client: Anthropic,
+    era: str = "",
+    pervasive_entities: Optional[List[str]] = None,
 ) -> List[SearchStrategy]:
     """Generate search strategies for a batch of entities using Claude.
 
@@ -215,6 +217,8 @@ def generate_batch_strategies(
             - context: str (transcript context from Phase 1)
         video_context: Video topic/title for disambiguation
         client: Anthropic API client instance
+        era: Optional era string for temporal disambiguation
+        pervasive_entities: Optional list of pervasive/background entity names
 
     Returns:
         List of SearchStrategy objects (one per entity)
@@ -247,6 +251,31 @@ Examples:
 - "Paris" (places, travel video) → best_title: "Paris", queries: ["Paris", "Paris France"]
 """
 
+    # Add era context if available
+    if era:
+        prompt += f"""
+IMPORTANT - Era/temporal context:
+This video covers: {era}
+- For ambiguous entity names (especially people), include era/date qualifiers in search queries.
+- Example: "Ernest Jones" in 1850s context → queries should include "Ernest Charles Jones Chartist"
+  rather than just "Ernest Jones" (which could match the 20th-century psychoanalyst).
+- Prefer Wikipedia articles about entities active during this era.
+"""
+
+    # Add pervasive entity guidance
+    if pervasive_entities:
+        pervasive_list = ", ".join(pervasive_entities)
+        prompt += f"""
+IMPORTANT - Pervasive/background entities:
+These entities are broad background/setting references: {pervasive_list}
+- For these, search for the CONTEXTUALLY RELEVANT article, not the generic one.
+- Example: "United Kingdom" in 1857 India video → best_title should be "British Raj" or
+  "Company rule in India", not the generic "United Kingdom" article.
+- Example: "India" in 1857 rebellion video → "Indian Rebellion of 1857" or "Company rule in India"
+  rather than the generic "India" article.
+- The goal is finding articles with visually useful, era-appropriate images.
+"""
+
     response = client.beta.messages.parse(
         model="claude-sonnet-4-5-20250929",
         max_tokens=2048,
@@ -261,7 +290,9 @@ Examples:
 def generate_search_strategies(
     enriched_map: dict,
     video_context: str,
-    batch_size: int = 7
+    batch_size: int = 7,
+    era: str = "",
+    pervasive_entities: Optional[List[str]] = None,
 ) -> dict:
     """Generate search strategies for all entities in enriched_map.
 
@@ -283,6 +314,8 @@ def generate_search_strategies(
             }
         video_context: Video topic/title for disambiguation
         batch_size: Number of entities per LLM call (default 7, range 5-10)
+        era: Optional era string for temporal disambiguation
+        pervasive_entities: Optional list of pervasive/background entity names
 
     Returns:
         Updated enriched_map with search_strategies field added to each entity:
@@ -321,6 +354,11 @@ def generate_search_strategies(
         print("Warning: No entities to process", file=sys.stderr)
         return enriched_map
 
+    if era:
+        print(f"Using era context: {era}", file=sys.stderr)
+    if pervasive_entities:
+        print(f"Pervasive entities: {', '.join(pervasive_entities)}", file=sys.stderr)
+
     # Process in batches
     total_generated = 0
     total_failed = 0
@@ -334,7 +372,10 @@ def generate_search_strategies(
 
         try:
             # Try batch processing
-            strategies = generate_batch_strategies(batch, video_context, client)
+            strategies = generate_batch_strategies(
+                batch, video_context, client,
+                era=era, pervasive_entities=pervasive_entities,
+            )
 
             # Merge strategies into entities
             for entity, strategy in zip(batch, strategies):
@@ -356,7 +397,10 @@ def generate_search_strategies(
                 try:
                     # Retry as single-entity batch
                     single_batch = [entity]
-                    strategies = generate_batch_strategies(single_batch, video_context, client)
+                    strategies = generate_batch_strategies(
+                        single_batch, video_context, client,
+                        era=era, pervasive_entities=pervasive_entities,
+                    )
 
                     entities[entity_name]["search_strategies"] = {
                         "best_title": strategies[0].best_title,
@@ -518,6 +562,14 @@ def main(argv: List[str] = None) -> int:
         default="/tmp/wikipedia_cache",
         help="Wikipedia validation cache directory (default: /tmp/wikipedia_cache)"
     )
+    parser.add_argument(
+        "--era",
+        help="Era/time period for temporal disambiguation (overrides summary)"
+    )
+    parser.add_argument(
+        "--summary",
+        help="Path to transcript_summary.json (for era and pervasive entities)"
+    )
 
     args = parser.parse_args(argv)
 
@@ -568,6 +620,32 @@ def main(argv: List[str] = None) -> int:
         print("Get your API key from: https://console.anthropic.com/settings/keys", file=sys.stderr)
         return 1
 
+    # Load era and pervasive entities from summary or CLI args
+    era = args.era or ""
+    pervasive_entities = []
+
+    summary_path = getattr(args, 'summary', None)
+    if not summary_path:
+        # Auto-detect in same directory as map
+        candidate = os.path.join(os.path.dirname(os.path.abspath(args.map)), "transcript_summary.json")
+        if os.path.exists(candidate):
+            summary_path = candidate
+
+    if summary_path and os.path.exists(summary_path):
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary_data = json.load(f)
+            if not era:
+                era = summary_data.get("era", "")
+            pervasive_entities = summary_data.get("pervasive_entities", [])
+            # Also use richer topic from summary for video_context
+            summary_topic = summary_data.get("topic", "")
+            if summary_topic and video_context in ("Unknown video", os.path.splitext(os.path.basename(enriched_map.get("source_srt", "")))[0].replace("_", " ").replace("-", " ")):
+                video_context = summary_topic
+                print(f"Using topic from summary: {video_context}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Failed to load summary: {e}", file=sys.stderr)
+
     # Handle empty entities
     entities = enriched_map.get("entities", {})
     if not entities:
@@ -580,7 +658,9 @@ def main(argv: List[str] = None) -> int:
             result = generate_search_strategies(
                 enriched_map,
                 video_context,
-                batch_size=args.batch_size
+                batch_size=args.batch_size,
+                era=era,
+                pervasive_entities=pervasive_entities,
             )
         except Exception as e:
             print(f"Error: Failed to generate strategies: {e}", file=sys.stderr)

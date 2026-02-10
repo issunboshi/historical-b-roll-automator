@@ -444,6 +444,7 @@ def disambiguate_entity(
     candidates: List[CandidateInfo],
     video_topic: str,
     client: Anthropic,
+    era: str = "",
 ) -> DisambiguationDecision:
     """Use Claude to select best Wikipedia candidate.
 
@@ -458,6 +459,7 @@ def disambiguate_entity(
         candidates: List of CandidateInfo objects to choose from
         video_topic: Video topic/title for disambiguation hints
         client: Anthropic API client instance
+        era: Optional era string for chronological disambiguation
 
     Returns:
         DisambiguationDecision with chosen article and confidence score
@@ -504,6 +506,17 @@ Consider:
 2. Is the entity type consistent (person mentioned in transcript should match person article)?
 3. Does the video topic provide disambiguation hints?"""
 
+    if era:
+        prompt += f"""
+
+CRITICAL - Chronological fit:
+This video covers the era: {era}
+- Strongly prefer candidates who were active/alive/relevant during this era.
+- For people: Check birth/death dates in summaries. A person born AFTER the video's
+  era CANNOT be the correct match.
+- For events: The event should fall within or near the video's time period.
+- For places: Prefer the historical name/article relevant to this era."""
+
     response = client.beta.messages.parse(
         model="claude-sonnet-4-5-20250929",
         max_tokens=1024,
@@ -531,6 +544,7 @@ def resolve_disambiguation(
     cache: Cache,
     max_depth: int = 3,
     current_depth: int = 0,
+    era: str = "",
 ) -> Optional[DisambiguationDecision]:
     """Resolve disambiguation page with depth limit.
 
@@ -607,6 +621,7 @@ def resolve_disambiguation(
         candidates=candidates,
         video_topic=video_topic,
         client=client,
+        era=era,
     )
 
     # Recursively check if chosen article is also a disambiguation page
@@ -622,6 +637,7 @@ def resolve_disambiguation(
             cache,
             max_depth,
             current_depth + 1,
+            era=era,
         )
 
     return decision
@@ -641,6 +657,7 @@ def disambiguate_search_results(
     session: requests.Session,
     client: Anthropic,
     cache: Cache,
+    era: str = "",
 ) -> DisambiguationDecision:
     """Main entry point for disambiguation.
 
@@ -687,6 +704,7 @@ def disambiguate_search_results(
                 video_topic,
                 client,
                 cache,
+                era=era,
             )
             if decision:
                 return decision
@@ -732,6 +750,7 @@ def disambiguate_search_results(
         candidates=candidates,
         video_topic=video_topic,
         client=client,
+        era=era,
     )
 
     return decision

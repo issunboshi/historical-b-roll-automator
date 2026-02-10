@@ -1,0 +1,17 @@
+# Design Plans
+
+Design documents for features and architectural decisions. New plans go in this directory; completed or abandoned plans move to `archive/`.
+
+## Active Plans
+
+_No active plans._
+
+## Archive
+
+| Date | Plan | Status |
+|------|------|--------|
+| 2026-02-10 | [Quality Improvements](archive/2026-02-10-quality-improvements.md) — Frequency capping, transcript summarization, entity deduplication, era-aware disambiguation | Completed |
+| 2026-02-05 | [Visual Elements & Markers](archive/2026-02-05-visual-elements-markers.md) — Generate DaVinci Resolve markers from visual elements | Completed |
+| 2026-02-04 | [API Layer](archive/2026-02-04-api-layer-implementation.md) — FastAPI endpoints, pipeline executor, Dockerfile | Completed |
+| 2026-02-03 | [Monorepo Architecture](archive/2026-02-03-monorepo-architecture-exploration.md) — Exploring unified YouTube toolkit architecture | On hold |
+| 2026-02-03 | [YouTube Toolkit Service Spec](archive/YOUTUBE_TOOLKIT_SERVICE_SPEC.md) — Shared integration spec for polyglot monorepo | On hold |
