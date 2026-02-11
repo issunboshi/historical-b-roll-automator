@@ -1256,7 +1256,7 @@ Examples:
     p_pipeline.add_argument("--output-dir", "-o", help="Output directory (default: SRT filename)")
     p_pipeline.add_argument("--fps", type=float, help="Timeline frame rate")
     p_pipeline.add_argument("--subject", help="Transcript subject for entity context")
-    p_pipeline.add_argument("--provider", choices=["openai", "ollama"], help="LLM provider")
+    p_pipeline.add_argument("--provider", choices=["openai", "anthropic", "ollama"], help="LLM provider")
     p_pipeline.add_argument("--model", help="LLM model name")
     p_pipeline.add_argument("--images-per-entity", type=int, help="Max images per entity")
     p_pipeline.add_argument("--duration", "-d", type=float, help="Clip duration in seconds")
@@ -1321,7 +1321,7 @@ Examples:
     p_extract.add_argument("--output-dir", help="Output directory (creates entities_map.json inside)")
     p_extract.add_argument("--fps", type=float, help="FPS for timecode conversion")
     p_extract.add_argument("--subject", help="Transcript subject for entity context")
-    p_extract.add_argument("--provider", choices=["openai", "ollama"], help="LLM provider")
+    p_extract.add_argument("--provider", choices=["openai", "anthropic", "ollama"], help="LLM provider")
     p_extract.add_argument("--model", help="LLM model name")
     p_extract.add_argument("--delay", type=float, help="Delay between LLM calls")
     
