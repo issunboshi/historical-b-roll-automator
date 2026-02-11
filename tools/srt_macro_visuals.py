@@ -323,7 +323,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--model",
-        help="Model name (default: gpt-4o for openai, claude-3-5-sonnet-20241022 for anthropic)",
+        help="Model name (default: gpt-4o for openai, claude-sonnet-4-5-20250929 for anthropic)",
     )
     args = parser.parse_args(argv)
 
@@ -334,7 +334,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Set default model - use more capable models for this task
     if not args.model:
-        args.model = "gpt-4o" if args.provider == "openai" else "claude-3-5-sonnet-20241022"
+        args.model = "gpt-4o" if args.provider == "openai" else "claude-sonnet-4-5-20250929"
 
     # Load API key
     if args.provider == "anthropic":

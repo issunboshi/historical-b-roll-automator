@@ -391,7 +391,7 @@ def cmd_extract_visuals(args: argparse.Namespace, config: Dict[str, Any]) -> int
     llm_config = config.get("llm", {})
     provider = args.provider or llm_config.get("provider", "anthropic")
     model = args.model or llm_config.get("visuals_model") or (
-        "claude-3-5-haiku-20241022" if provider == "anthropic" else "gpt-4o-mini"
+        "claude-haiku-4-5-20251001" if provider == "anthropic" else "gpt-4o-mini"
     )
     fps = args.fps or config.get("fps", 25.0)
     batch_size = getattr(args, 'batch_size', None) or config.get("visuals_batch_size", 5)
