@@ -356,6 +356,9 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if getattr(args, 'verbose', False):
         cmd.append("-v")
 
+    if getattr(args, 'interactive', False):
+        cmd.append("--interactive")
+
     try:
         run_step("Downloading images from Wikipedia", cmd)
         print(f"\nEntities map updated: {map_path.absolute()}")
@@ -649,6 +652,9 @@ def cmd_disambiguate(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     if hasattr(args, 'cache_dir') and args.cache_dir:
         cmd.extend(["--cache-dir", args.cache_dir])
+
+    if getattr(args, 'interactive', False):
+        cmd.append("--interactive")
 
     try:
         run_step("Pre-computing Wikipedia disambiguation", cmd)
@@ -961,6 +967,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             disambig_parallel=getattr(args, 'disambig_parallel', 10),
             min_priority=getattr(args, 'min_priority', 0.5),
             cache_dir=getattr(args, 'cache_dir', None),
+            interactive=getattr(args, 'interactive', False),
         )
 
         result = cmd_disambiguate(disambiguate_args, config)
@@ -983,6 +990,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             min_priority=getattr(args, 'min_priority', None),
             verbose=getattr(args, 'verbose', False),
             output_dir=str(output_dir),  # Pass output directory to download step
+            interactive=getattr(args, 'interactive', False),
         )
 
         result = cmd_download(download_args, config)
@@ -1227,6 +1235,8 @@ Examples:
                             help="Max placements for pervasive/background entities (default: 2)")
     p_pipeline.add_argument("--skip-summary", action="store_true",
                             help="Skip the transcript summary step")
+    p_pipeline.add_argument("-i", "--interactive", action="store_true",
+                            help="Pause for interactive review during disambiguation and download")
 
 
     # Extract command
@@ -1274,6 +1284,8 @@ Examples:
                             help="Minimum priority threshold for entity filtering (0.0 disables, default: 0.5)")
     p_download.add_argument("-v", "--verbose", action="store_true",
                             help="Show per-entity skip messages")
+    p_download.add_argument("-i", "--interactive", action="store_true",
+                            help="Interactively retry failed downloads with alternative search terms")
 
     # Enrich command
     p_enrich = subparsers.add_parser(
@@ -1365,6 +1377,8 @@ Examples:
     p_disambig.add_argument("--min-priority", type=float, default=0.5,
                             help="Minimum priority threshold (0.0 disables)")
     p_disambig.add_argument("--cache-dir", help="Wikipedia cache directory")
+    p_disambig.add_argument("-i", "--interactive", action="store_true",
+                            help="Interactively review uncertain disambiguations")
 
     # Status command
     subparsers.add_parser(

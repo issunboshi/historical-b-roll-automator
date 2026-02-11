@@ -124,3 +124,46 @@ def create_override_entry(entity_name: str, wikipedia_title: str) -> Dict[str, s
         Dict with single key-value pair for override
     """
     return {entity_name: wikipedia_title}
+
+
+def save_interactive_overrides(
+    new_overrides: Dict[str, str],
+    override_path: Path,
+) -> int:
+    """Merge new interactive overrides into the existing overrides file.
+
+    Reads the existing file (if any), merges new entries (new wins on conflict),
+    and writes back atomically.
+
+    Args:
+        new_overrides: Dict mapping entity names to Wikipedia article titles
+        override_path: Path to disambiguation_overrides.json
+
+    Returns:
+        Number of overrides written (new + existing)
+    """
+    if not new_overrides:
+        return 0
+
+    # Load existing overrides
+    existing: Dict[str, str] = {}
+    if override_path.exists():
+        try:
+            with open(override_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Merge: new overrides win on conflict
+    existing.update(new_overrides)
+
+    # Atomic write
+    override_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=override_path.parent, delete=False, suffix=".tmp"
+    ) as tmp_file:
+        json.dump(existing, tmp_file, indent=2, ensure_ascii=False)
+        tmp_name = tmp_file.name
+
+    os.replace(tmp_name, override_path)
+    return len(existing)

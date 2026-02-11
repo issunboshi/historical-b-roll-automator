@@ -332,19 +332,28 @@ def download_entity(
 
     # Check for pre-computed disambiguation (from disambiguate_entities.py step)
     precomputed_disambig = payload.get("disambiguation")
-    if precomputed_disambig and precomputed_disambig.get("wikipedia_title"):
+    wiki_title = None
+    if precomputed_disambig:
+        wiki_title = (precomputed_disambig.get("wikipedia_title")
+                      or precomputed_disambig.get("chosen_article"))
+    if wiki_title:
         # Use pre-computed disambiguation result
-        wiki_title = precomputed_disambig["wikipedia_title"]
         action = precomputed_disambig.get("action", "download")
 
         if action == "skip":
             safe_print(f"[{current_idx}/{total_entities}] Skipping {entity_name}: pre-computed skip")
             return (entity_name, False, out_dir / safe_folder_name(entity_name), None, precomputed_disambig)
 
-        # Use pre-computed Wikipedia title as primary search term
-        search_terms = [wiki_title] + search_terms
+        # Use pre-computed Wikipedia title for download
+        confidence = precomputed_disambig.get("confidence", 0)
+        if confidence >= 7:
+            # High confidence: ONLY use disambiguated title (don't fall back to wrong articles)
+            search_terms = [wiki_title]
+        else:
+            # Lower confidence: try disambiguated title first, then original terms
+            search_terms = [wiki_title] + [t for t in search_terms if t != wiki_title]
         disambiguation_result = precomputed_disambig
-        safe_print(f"[{current_idx}/{total_entities}] Using pre-computed: {entity_name} -> {wiki_title}")
+        safe_print(f"[{current_idx}/{total_entities}] Using pre-computed: {entity_name} -> {wiki_title} (conf:{confidence})")
 
     # Check for manual override
     elif disambiguation_overrides and entity_name in disambiguation_overrides:
@@ -590,6 +599,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to disambiguation overrides JSON file")
     parser.add_argument("--review-file", type=str, default="output/disambiguation_review.json",
                         help="Path to write disambiguation review file")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Interactively retry failed downloads with alternative search terms")
     args = parser.parse_args(argv)
 
     # Setup logging based on verbose flag
@@ -858,6 +869,86 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"Error processing {entity_name}: {e}", file=sys.stderr)
                     results[entity_name] = (False, out_dir / safe_folder_name(entity_name), None, None)
     
+    # Interactive retry for failed downloads
+    if getattr(args, 'interactive', False):
+        failed_entities = [
+            (name, entities[name])
+            for name, (success, _, matched_term, _) in results.items()
+            if not success and name in entities
+        ]
+
+        if failed_entities:
+            print()
+            print("=" * 60)
+            print("Interactive Download Retry")
+            print("=" * 60)
+            print(f"{len(failed_entities)} entities had no images.")
+            print()
+            print("For each entity:")
+            print("  Enter     — skip (no retry)")
+            print("  <term>    — retry with this search term")
+            print("  q         — stop reviewing")
+            print()
+
+            for i, (entity_name, payload) in enumerate(failed_entities, 1):
+                disambig = payload.get("disambiguation", {})
+                current_title = (disambig.get("wikipedia_title")
+                                 or disambig.get("chosen_article", ""))
+                entity_type = payload.get("entity_type", "")
+
+                print(f"[{i}/{len(failed_entities)}] {entity_name}")
+                if current_title:
+                    print(f"  Tried: {current_title}")
+                print(f"  Type:  {entity_type}")
+                print()
+
+                try:
+                    user_input = input("  Search term> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  (stopping review)")
+                    break
+
+                if user_input.lower() == "q":
+                    print("  (stopping review)")
+                    break
+                elif user_input:
+                    # Retry download with user-provided search term
+                    safe_print(f"  Retrying {entity_name} with: {user_input}")
+                    name, success, entity_dir, matched_term, disambiguation_result = download_entity(
+                        entity_name=entity_name,
+                        entity_type=entity_type,
+                        out_dir=out_dir,
+                        downloader=downloader,
+                        images_per_entity=args.images_per_entity,
+                        user_agent=args.user_agent,
+                        png_width=args.png_width,
+                        delay=args.delay,
+                        no_svg_to_png=args.no_svg_to_png,
+                        worker_id=0,
+                        total_entities=total,
+                        current_idx=i,
+                        search_terms=[user_input],
+                        payload=payload,
+                        mention_count=len(payload.get("occurrences", [])),
+                        use_disambiguation=False,
+                        session=wiki_session,
+                        era_year_range=era_year_range,
+                    )
+                    if success:
+                        # Update result and set disambiguation to interactive override
+                        results[name] = (success, entity_dir, matched_term, {
+                            "disambiguation_source": "interactive_override",
+                            "confidence": 10,
+                            "match_quality": "high",
+                            "wikipedia_title": user_input,
+                        })
+                        safe_print(f"  -> Success: {entity_name} ({matched_term})")
+                    else:
+                        safe_print(f"  -> Still no images for: {user_input}")
+                else:
+                    print(f"  -> Skipped")
+                print()
+
     # Harvest results and update entities map
     print()
     print("Harvesting downloaded images...")
@@ -879,15 +970,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         success, entity_dir, matched_term, disambiguation_result = results[entity_name]
 
-        # Track disambiguation metadata
+        # Track disambiguation metadata (use wikipedia_title consistently)
         if disambiguation_result:
             payload["disambiguation"] = {
-                "source": disambiguation_result.get("disambiguation_source"),
+                "disambiguation_source": disambiguation_result.get("disambiguation_source"),
                 "confidence": disambiguation_result.get("confidence"),
                 "match_quality": disambiguation_result.get("match_quality"),
                 "rationale": disambiguation_result.get("rationale"),
                 "candidates_considered": disambiguation_result.get("candidates_considered"),
-                "chosen_article": disambiguation_result.get("wikipedia_title"),
+                "wikipedia_title": (disambiguation_result.get("wikipedia_title")
+                                    or disambiguation_result.get("chosen_article")),
             }
 
         if not success:

@@ -106,6 +106,7 @@ python broll.py pipeline --srt video.srt [options]
 | `--min-priority N` | 0.5 | Skip entities below this priority (0 disables) |
 | `--min-match-quality` | high | Timeline quality filter: `high`, `medium`, `low`, `none` |
 | `-v, --verbose` | — | Show per-entity processing details |
+| `-i, --interactive` | — | Pause for interactive review during disambiguation and download |
 
 ### Era & Quality Control
 
@@ -281,6 +282,7 @@ python broll.py xml --map strategies_entities.json --max-placements 3 --pervasiv
 | `-j, --disambig-parallel N` | Parallel workers (default: 10) |
 | `--min-priority N` | Minimum priority threshold |
 | `--cache-dir PATH` | Wikipedia cache directory |
+| `-i, --interactive` | Interactively review uncertain disambiguations |
 
 #### download
 | Flag | Description |
@@ -293,6 +295,7 @@ python broll.py xml --map strategies_entities.json --max-placements 3 --pervasiv
 | `--no-svg-to-png` | Disable SVG to PNG conversion |
 | `--min-priority N` | Skip entities below this priority |
 | `-v, --verbose` | Show per-entity details |
+| `-i, --interactive` | Interactively retry failed downloads with alternative search terms |
 
 #### xml
 | Flag | Description |
@@ -763,7 +766,19 @@ Check `broll_timeline.excluded.json` for entities filtered by quality threshold.
 
 ### Review flagged entities
 
-Check `disambiguation_review.json` for entities that need human verification. Create `output/disambiguation_overrides.json` to provide manual corrections:
+Use `--interactive` to review uncertain disambiguations and retry failed downloads in real time:
+```bash
+python broll.py pipeline --srt video.srt --from-step disambiguate --interactive
+```
+
+This pauses after disambiguation and download to let you:
+- Override wrong Wikipedia article matches (e.g. "Ernest Jones" -> "Ernest Charles Jones")
+- Provide alternative search terms for entities with no images
+- Skip entities that aren't relevant
+
+Overrides are saved to `disambiguation_overrides.json` so they persist for future runs.
+
+Alternatively, create overrides manually:
 
 ```json
 {
