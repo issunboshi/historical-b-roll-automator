@@ -243,6 +243,134 @@ def disambiguate_single_entity(
     return (entity_name, result)
 
 
+def interactive_review(
+    entities: Dict[str, Dict],
+    results: Dict[str, Optional[dict]],
+    override_path: Path,
+) -> Dict[str, str]:
+    """Interactively review uncertain or failed disambiguation results.
+
+    Presents entities where:
+    - Disambiguation failed (no candidates found)
+    - Confidence < 7 (uncertain)
+    - Action was "skip"
+
+    Returns dict of overrides entered by the user.
+    """
+    # Collect entities needing review
+    needs_review = []
+    for entity_name, result in results.items():
+        if result is None:
+            needs_review.append((entity_name, result, "failed"))
+            continue
+        confidence = result.get("confidence", 0)
+        action = result.get("action", "")
+        if action == "skip" or confidence < 7:
+            needs_review.append((entity_name, result, action))
+
+    if not needs_review:
+        print("\nNo entities need interactive review.")
+        return {}
+
+    # Sort by confidence (lowest first)
+    needs_review.sort(key=lambda x: (x[1] or {}).get("confidence", 0))
+
+    print()
+    print("=" * 60)
+    print("Interactive Disambiguation Review")
+    print("=" * 60)
+    print(f"{len(needs_review)} entities need review.")
+    print()
+    print("For each entity:")
+    print("  Enter     — accept current choice")
+    print("  <title>   — override with a Wikipedia article title")
+    print("  skip      — skip this entity (no download)")
+    print("  q         — stop reviewing (keep remaining as-is)")
+    print()
+
+    new_overrides: Dict[str, str] = {}
+
+    for i, (entity_name, result, reason) in enumerate(needs_review, 1):
+        confidence = (result or {}).get("confidence", 0)
+        current_choice = (result or {}).get("wikipedia_title", "none")
+        rationale = (result or {}).get("rationale", "")
+        candidates = (result or {}).get("candidates_considered", [])
+
+        print(f"[{i}/{len(needs_review)}] {entity_name}")
+        print(f"  Current:    {current_choice} (confidence: {confidence})")
+        if candidates:
+            print(f"  Candidates: {', '.join(str(c) for c in candidates[:5])}")
+        if rationale:
+            print(f"  Rationale:  {rationale}")
+        print()
+
+        try:
+            user_input = input("  Override> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  (stopping review)")
+            break
+
+        if user_input.lower() == "q":
+            print("  (stopping review)")
+            break
+        elif user_input.lower() == "skip":
+            # Mark as skip in results
+            if result:
+                result["action"] = "skip"
+                result["wikipedia_title"] = None
+            print(f"  -> Skipping {entity_name}")
+        elif user_input:
+            # User provided an override title
+            new_overrides[entity_name] = user_input
+            # Update the result in place so it gets written to entities_map
+            if entity_name in entities and entities[entity_name].get("disambiguation"):
+                entities[entity_name]["disambiguation"]["wikipedia_title"] = user_input
+                entities[entity_name]["disambiguation"]["action"] = "download"
+                entities[entity_name]["disambiguation"]["disambiguation_source"] = "interactive_override"
+                entities[entity_name]["disambiguation"]["confidence"] = 10
+            elif result:
+                result["wikipedia_title"] = user_input
+                result["action"] = "download"
+                result["disambiguation_source"] = "interactive_override"
+                result["confidence"] = 10
+            print(f"  -> Override: {entity_name} -> {user_input}")
+        else:
+            print(f"  -> Accepted: {current_choice}")
+        print()
+
+    # Save overrides if any were entered
+    if new_overrides:
+        # Import here to avoid circular imports at module level
+        try:
+            from src.core.review import save_interactive_overrides
+        except ImportError:
+            # Inline fallback for standalone execution
+            import tempfile
+            def save_interactive_overrides(overrides, path):
+                existing = {}
+                if path.exists():
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            existing = json.load(f)
+                    except (json.JSONDecodeError, IOError):
+                        pass
+                existing.update(overrides)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    mode="w", dir=path.parent, delete=False, suffix=".tmp"
+                ) as tmp:
+                    json.dump(existing, tmp, indent=2, ensure_ascii=False)
+                    tmp_name = tmp.name
+                import os
+                os.replace(tmp_name, path)
+                return len(existing)
+
+        count = save_interactive_overrides(new_overrides, override_path)
+        print(f"Saved {len(new_overrides)} new override(s) to {override_path} ({count} total)")
+
+    return new_overrides
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Pre-compute Wikipedia disambiguation for all entities",
@@ -257,6 +385,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to disambiguation overrides JSON file")
     parser.add_argument("--cache-dir", type=str, default="/tmp/wikipedia_cache",
                         help="Directory for disambiguation cache")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Interactively review uncertain disambiguations after parallel run")
     args = parser.parse_args(argv)
 
     # Check for API key
@@ -404,6 +534,27 @@ def main(argv: Optional[List[str]] = None) -> int:
             skip_count += 1
         else:
             success_count += 1
+
+    # Interactive review phase (after parallel disambiguation)
+    if args.interactive:
+        new_overrides = interactive_review(
+            entities=entities,
+            results=results,
+            override_path=Path(args.overrides),
+        )
+        # Recount after interactive overrides
+        if new_overrides:
+            success_count = 0
+            skip_count = 0
+            fail_count = 0
+            for entity_name, result in results.items():
+                if result is None:
+                    fail_count += 1
+                    continue
+                if result.get("action") == "skip":
+                    skip_count += 1
+                else:
+                    success_count += 1
 
     # Update skipped list
     if "skipped" not in entities_map:
