@@ -205,6 +205,7 @@ def generate_summary(
     entities: dict,
     transcript_sample: str,
     client: Anthropic,
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> TranscriptSummary:
     """Generate transcript summary using Claude structured outputs."""
     entity_text = format_entity_summary(entities)
@@ -247,7 +248,7 @@ Based on the transcript and entity list:
    Only group names that genuinely refer to the same entity."""
 
     response = client.beta.messages.parse(
-        model="claude-sonnet-4-5-20250929",
+        model=model,
         max_tokens=2048,
         betas=["structured-outputs-2025-11-13"],
         messages=[{"role": "user", "content": prompt}],
@@ -277,6 +278,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--out",
         help="Output path (default: transcript_summary.json in same dir as --map)"
+    )
+    parser.add_argument(
+        "--model", default="claude-sonnet-4-5-20250929",
+        help="Anthropic model for summary generation (default: claude-sonnet-4-5-20250929)"
     )
     args = parser.parse_args(argv)
 
@@ -317,7 +322,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Generate summary
     print("Generating transcript summary via LLM...")
     client = Anthropic(api_key=api_key)
-    summary = generate_summary(entities, transcript_sample, client)
+    summary = generate_summary(entities, transcript_sample, client, model=args.model)
 
     # Convert to dict for JSON output
     result = {

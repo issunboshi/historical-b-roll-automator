@@ -34,7 +34,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Auto-load API keys from config file
 import config  # noqa: F401
@@ -57,8 +57,49 @@ DEFAULT_CONFIG = {
     "llm": {
         "provider": "openai",
         "model": "gpt-4o-mini",
+        "roles": {
+            "extract": {"provider": "openai", "model": "gpt-4o-mini"},
+            "extract-visuals": {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"},
+            "summarize": {"provider": "anthropic", "model": "claude-sonnet-4-5-20250929"},
+            "strategies": {"provider": "anthropic", "model": "claude-sonnet-4-5-20250929"},
+            "disambiguate": {"provider": "anthropic", "model": "claude-sonnet-4-5-20250929"},
+            "macro-visuals": {"provider": "openai", "model": "gpt-4o"},
+        },
     },
 }
+
+
+# Roles that require Anthropic (they use client.beta.messages.parse with structured outputs)
+PROVIDER_CONSTRAINTS = {
+    "summarize": "anthropic",
+    "strategies": "anthropic",
+    "disambiguate": "anthropic",
+}
+
+
+def resolve_llm_for_role(config: Dict, role: str) -> Tuple[str, str]:
+    """Resolve (provider, model) for a pipeline role.
+
+    Precedence: role config > global config > hardcoded fallback.
+    Warns and overrides if role has a provider constraint.
+    """
+    llm = config.get("llm", {})
+    global_provider = llm.get("provider", "openai")
+    global_model = llm.get("model", "gpt-4o-mini")
+
+    role_cfg = llm.get("roles", {}).get(role, {})
+    provider = role_cfg.get("provider") or global_provider
+    model = role_cfg.get("model") or global_model
+
+    constraint = PROVIDER_CONSTRAINTS.get(role)
+    if constraint and provider != constraint:
+        print(f"Warning: role '{role}' requires {constraint}, "
+              f"ignoring '{provider}'", file=sys.stderr)
+        provider = constraint
+        if not role_cfg.get("model"):
+            model = "claude-sonnet-4-5-20250929"
+
+    return provider, model
 
 
 def find_config_file() -> Optional[Path]:
@@ -296,12 +337,12 @@ def cmd_extract(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Build command
-    llm_config = config.get("llm", {})
-    provider = args.provider or llm_config.get("provider", "openai")
-    model = args.model or llm_config.get("model", "gpt-4o-mini")
+    # Build command — resolve provider/model for the "extract" role
+    role_provider, role_model = resolve_llm_for_role(config, "extract")
+    provider = args.provider or role_provider
+    model = args.model or role_model
     fps = args.fps or config.get("fps", 25.0)
-    
+
     cmd = [
         sys.executable, str(script),
         "--srt", str(args.srt),
@@ -310,7 +351,7 @@ def cmd_extract(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         "--model", model,
         "--fps", str(fps),
     ]
-    
+
     if args.subject:
         cmd.extend(["--subject", args.subject])
     
@@ -387,12 +428,18 @@ def cmd_extract_visuals(args: argparse.Namespace, config: Dict[str, Any]) -> int
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build command
+    # Build command — resolve provider/model for the "extract-visuals" role
+    # Honor legacy visuals_model config if roles.extract-visuals not set
     llm_config = config.get("llm", {})
-    provider = args.provider or llm_config.get("provider", "anthropic")
-    model = args.model or llm_config.get("visuals_model") or (
-        "claude-haiku-4-5-20251001" if provider == "anthropic" else "gpt-4o-mini"
-    )
+    role_cfg = llm_config.get("roles", {}).get("extract-visuals", {})
+    if not role_cfg.get("model") and llm_config.get("visuals_model"):
+        # Legacy compat: visuals_model still honored when role not configured
+        role_provider = llm_config.get("provider", "anthropic")
+        role_model = llm_config["visuals_model"]
+    else:
+        role_provider, role_model = resolve_llm_for_role(config, "extract-visuals")
+    provider = args.provider or role_provider
+    model = args.model or role_model
     fps = args.fps or config.get("fps", 25.0)
     batch_size = getattr(args, 'batch_size', None) or config.get("visuals_batch_size", 5)
 
@@ -484,11 +531,16 @@ def cmd_summarize(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resolve model for the "summarize" role
+    _, role_model = resolve_llm_for_role(config, "summarize")
+    model = getattr(args, 'model', None) or role_model
+
     cmd = [
         sys.executable, str(script),
         "--map", str(map_path),
         "--srt", str(srt_path),
         "--out", str(out_path),
+        "--model", model,
     ]
 
     try:
@@ -593,10 +645,15 @@ def cmd_strategies(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resolve model for the "strategies" role
+    _, role_model = resolve_llm_for_role(config, "strategies")
+    model = getattr(args, 'model', None) or role_model
+
     cmd = [
         sys.executable, str(script),
         "--map", str(map_path),
         "--out", str(out_path),
+        "--model", model,
     ]
 
     if args.video_context:
@@ -643,11 +700,16 @@ def cmd_disambiguate(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if min_priority is None:
         min_priority = config.get("min_priority", 0.5)
 
+    # Resolve model for the "disambiguate" role
+    _, role_model = resolve_llm_for_role(config, "disambiguate")
+    model = getattr(args, 'model', None) or role_model
+
     cmd = [
         sys.executable, str(script),
         "--map", str(map_path),
         "--parallel", str(parallel),
         "--min-priority", str(min_priority),
+        "--model", model,
     ]
 
     if hasattr(args, 'cache_dir') and args.cache_dir:
@@ -1106,6 +1168,16 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     print(f"  Min gap:          {config.get('min_gap_seconds', 2.0)}s")
     print(f"  B-roll tracks:    {config.get('broll_track_count', 4)}")
     print(f"  Allow non-PD:     {config.get('allow_non_pd', False)}")
+
+    # Show per-role LLM config
+    print()
+    print("LLM Roles:")
+    role_names = ["extract", "extract-visuals", "summarize", "strategies", "disambiguate"]
+    for role in role_names:
+        provider, model = resolve_llm_for_role(config, role)
+        constraint = PROVIDER_CONSTRAINTS.get(role)
+        suffix = f" (requires {constraint})" if constraint else ""
+        print(f"  {role:20s}  {provider}/{model}{suffix}")
     
     print()
     print("Scripts:")

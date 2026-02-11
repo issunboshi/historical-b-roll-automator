@@ -154,6 +154,7 @@ def disambiguate_single_entity(
     idx: int,
     total: int,
     era: str = "",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> Tuple[str, Optional[dict]]:
     """
     Run disambiguation for a single entity.
@@ -211,6 +212,7 @@ def disambiguate_single_entity(
             client=client,
             cache=cache,
             era=era,
+            model=model,
         )
     except Exception as e:
         safe_print(f"[{idx}/{total}] Disambiguation failed for {entity_name}: {e}")
@@ -387,6 +389,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Directory for disambiguation cache")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Interactively review uncertain disambiguations after parallel run")
+    parser.add_argument("--model", default="claude-sonnet-4-5-20250929",
+                        help="Anthropic model for disambiguation")
     args = parser.parse_args(argv)
 
     # Check for API key
@@ -506,6 +510,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 idx=idx,
                 total=total,
                 era=era,
+                model=args.model,
             )
             futures[future] = entity_name
 
