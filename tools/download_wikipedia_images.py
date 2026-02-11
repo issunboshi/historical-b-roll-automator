@@ -40,8 +40,8 @@ DEFAULT_USER_AGENT = "b-roll-finder/0.1 (Wikipedia image downloader; contact: lo
 
 # Rate limiting and retry settings (can be overridden via CLI)
 REQUEST_DELAY_S: float = 0.1
-MAX_RETRIES: int = 5
-RETRY_BACKOFF_S: float = 1.0
+MAX_RETRIES: int = 3
+RETRY_BACKOFF_S: float = 0.5
 SVG_TO_PNG: bool = True
 SVG_PNG_WIDTH: int = 3000
 _SVG_IMPORT_FAILED_WARNED: bool = False
@@ -80,15 +80,15 @@ def build_http_session(user_agent: str) -> requests.Session:
     return session
 
 
-def search_wikipedia_page(session: requests.Session, query: str) -> Optional[Dict]:
+def search_wikipedia_pages(session: requests.Session, query: str, limit: int = 3) -> List[Dict]:
     """
-    Returns the top search result as a dict with 'pageid' and 'title' or None if no result.
+    Returns up to *limit* search results, each a dict with 'pageid' and 'title'.
     """
     params = {
         "action": "query",
         "list": "search",
         "srsearch": query,
-        "srlimit": 1,
+        "srlimit": limit,
         "format": "json",
         "formatversion": 2,
         "utf8": 1,
@@ -98,10 +98,16 @@ def search_wikipedia_page(session: requests.Session, query: str) -> Optional[Dic
     resp.raise_for_status()
     data = resp.json()
     results = data.get("query", {}).get("search", [])
-    if not results:
-        return None
-    top = results[0]
-    return {"pageid": top.get("pageid"), "title": top.get("title")}
+    return [{"pageid": r.get("pageid"), "title": r.get("title")} for r in results]
+
+
+def search_wikipedia_page(session: requests.Session, query: str) -> Optional[Dict]:
+    """
+    Returns the top search result as a dict with 'pageid' and 'title' or None if no result.
+    Backward-compatible wrapper around search_wikipedia_pages().
+    """
+    pages = search_wikipedia_pages(session, query, limit=1)
+    return pages[0] if pages else None
 
 
 def get_page_images(session: requests.Session, pageid: int) -> List[str]:
@@ -201,6 +207,41 @@ def get_content_images(session: requests.Session, pageid: int) -> List[str]:
         if not title.lower().startswith("file:"):
             title = f"File:{title}"
         # Skip obvious non-image by extension early
+        if is_probably_non_image_title(title):
+            continue
+        if title not in seen:
+            seen.add(title)
+            file_titles.append(title)
+
+    # Second pass: scan <img> tags with src pointing to upload.wikimedia.org
+    for img in content.select("img[src]"):
+        src = img.get("src", "")
+        if "upload.wikimedia.org" not in src:
+            continue
+
+        # Try data-file-name attribute first (MediaWiki metadata)
+        data_file_name = img.get("data-file-name")
+        if data_file_name:
+            title = f"File:{unquote(data_file_name).replace('_', ' ')}"
+        else:
+            # Extract filename from URL path
+            # Thumb URLs: .../thumb/a/ab/Name.ext/200px-Name.ext
+            # Direct URLs: .../a/ab/Name.ext
+            path = urlparse(src).path
+            segments = [s for s in path.split("/") if s]
+            if "thumb" in segments:
+                thumb_idx = segments.index("thumb")
+                # Filename is 3 segments after 'thumb': thumb/<hash1>/<hash2>/<Name.ext>/...
+                if thumb_idx + 3 < len(segments):
+                    raw_name = segments[thumb_idx + 3]
+                else:
+                    continue
+            else:
+                raw_name = segments[-1] if segments else ""
+            if not raw_name:
+                continue
+            title = f"File:{unquote(raw_name).replace('_', ' ')}"
+
         if is_probably_non_image_title(title):
             continue
         if title not in seen:
@@ -862,12 +903,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=str, default=None, help="Output directory. If omitted, use ENV/CONFIG or current directory.")
     parser.add_argument("--user-agent", type=str, default=DEFAULT_USER_AGENT, help="Custom HTTP User-Agent")
     parser.add_argument("--delay", type=float, default=0.3, help="Politeness delay between requests (seconds). Default: 0.3")
-    parser.add_argument("--max-retries", type=int, default=5, help="Max HTTP retries on 429/5xx. Default: 5")
-    parser.add_argument("--retry-backoff", type=float, default=1.0, help="Base backoff seconds for retries. Default: 1.0")
+    parser.add_argument("--max-retries", type=int, default=3, help="Max HTTP retries on 429/5xx. Default: 3")
+    parser.add_argument("--retry-backoff", type=float, default=0.5, help="Base backoff seconds for retries. Default: 0.5")
     parser.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion (enabled by default).")
     parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion (default: 3000).")
     parser.add_argument("--prefer-recent", action="store_true", help="Prioritize newer images first when year can be inferred.")
     parser.add_argument("--no-historical-priority", action="store_true", help="Disable older-first reordering; keep source order.")
+    parser.add_argument("--search-limit", type=int, default=3, help="Number of Wikipedia search results to try per query. Default: 3")
     parser.add_argument("--era-start", type=int, help="Start year for era-aware image prioritization.")
     parser.add_argument("--era-end", type=int, help="End year for era-aware image prioritization.")
     args = parser.parse_args(argv)
@@ -895,24 +937,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         if term_index > 1:
             print("")  # spacer between terms
         print(f"[{term_index}/{len(args.queries)}] Searching Wikipedia for: {query}")
-        page = search_wikipedia_page(session, query)
-        if not page:
+        pages = search_wikipedia_pages(session, query, limit=args.search_limit)
+        if not pages:
             print("No Wikipedia results found.", file=sys.stderr)
             continue
-        pageid = page["pageid"]
-        title = page["title"]
-        print(f"Found page: {title} (pageid={pageid})")
 
-        # Get images from content only; if none, fallback to parse/images filtered
-        all_images = get_content_images(session, pageid)
-        if not all_images:
-            fallback = filter_out_ui_icons(get_page_images(session, pageid))
-            if fallback:
-                print(f"No content-anchored images found; falling back to {len(fallback)} page images (filtered).")
-                all_images = fallback
+        # Try each search result until one yields images
+        pageid = None
+        title = None
+        all_images: List[str] = []
+        for pi, page in enumerate(pages, start=1):
+            pageid = page["pageid"]
+            title = page["title"]
+            if pi == 1:
+                print(f"Found page: {title} (pageid={pageid})")
             else:
-                print("No images found in article content.", file=sys.stderr)
-                continue
+                print(f"Trying alternate page {pi}/{len(pages)}: {title} (pageid={pageid})")
+
+            all_images = get_content_images(session, pageid)
+            if not all_images:
+                fallback = filter_out_ui_icons(get_page_images(session, pageid))
+                if fallback:
+                    print(f"No content-anchored images found; falling back to {len(fallback)} page images (filtered).")
+                    all_images = fallback
+
+            if all_images:
+                break
+            print(f"No images found on: {title}", file=sys.stderr)
+
+        if not all_images:
+            print(f"No images found on any of {len(pages)} search result(s).", file=sys.stderr)
+            continue
         print(f"Found {len(all_images)} file links; downloading up to {args.limit} images.")
 
         # Query metadata for all candidates so we can filter to images and still meet the limit

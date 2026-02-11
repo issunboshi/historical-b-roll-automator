@@ -703,6 +703,7 @@ python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 - `--limit N` — Number of images to download (default: 10)
 - `--output PATH` — Output directory
 - `--user-agent STRING` — Custom HTTP User-Agent
+- `--search-limit N` — Number of Wikipedia search results to try per query (default: 3)
 - `--era-start YEAR` — Start of era range for image ordering
 - `--era-end YEAR` — End of era range for image ordering
 
@@ -729,8 +730,10 @@ python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 ### Rate Limiting
 
 - `--delay SECONDS` — Politeness delay (default: 0.3)
-- `--max-retries N` — HTTP retries on 429/5xx (default: 5)
-- `--retry-backoff SECONDS` — Exponential backoff base (default: 1.0)
+- `--max-retries N` — HTTP retries on 429/5xx (default: 3)
+- `--retry-backoff SECONDS` — Exponential backoff base (default: 0.5)
+
+All Wikipedia API sessions are authenticated when `WIKIPEDIA_API_ACCESS_TOKEN` is set, providing 5000 req/hr (vs 500 unauthenticated). This applies to the standalone downloader, disambiguation, and download-entities tools.
 
 ### Image Ordering
 

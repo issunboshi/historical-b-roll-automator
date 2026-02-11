@@ -44,6 +44,7 @@ except ImportError:
 # Disambiguation imports (dual fallback pattern)
 try:
     from tools.disambiguation import (
+        build_wiki_session,
         search_wikipedia_candidates,
         is_disambiguation_page,
         fetch_candidate_info,
@@ -56,6 +57,7 @@ try:
     )
 except ImportError:
     from disambiguation import (
+        build_wiki_session,
         search_wikipedia_candidates,
         is_disambiguation_page,
         fetch_candidate_info,
@@ -681,11 +683,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("All entities already have images. Nothing to download.")
         return 0
 
-    # Create shared session for Wikipedia API calls
-    wiki_session = requests.Session()
-    wiki_session.headers.update({
-        "User-Agent": f"B-Roll-Finder/1.0 ({args.user_agent})"
-    })
+    # Create shared session for Wikipedia API calls (authenticated if token available)
+    wiki_session = build_wiki_session(user_agent=f"B-Roll-Finder/1.0 ({args.user_agent})")
 
     # Extract video topic for disambiguation context
     video_topic = entities_map.get("video_context", "")

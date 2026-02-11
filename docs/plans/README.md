@@ -4,7 +4,9 @@ Design documents for features and architectural decisions. New plans go in this 
 
 ## Active Plans
 
-_No active plans._
+| Date | Plan | Status |
+|------|------|--------|
+| 2026-02-11 | [Download Speed Improvements](2026-02-11-download-speed-improvements.md) — Auth sessions, `<img>` extraction, multi-page search, retry tuning | In Progress |
 
 ## Archive
 
