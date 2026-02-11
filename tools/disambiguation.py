@@ -44,6 +44,7 @@ from diskcache import Cache
 from src.core.disambiguation import (
     WIKIPEDIA_API,
     USER_AGENT,
+    build_wiki_session,
     derive_match_quality,
     apply_confidence_routing,
     log_disambiguation_decision,
@@ -115,7 +116,7 @@ def main(argv: List[str] = None) -> int:
     args = parser.parse_args(argv)
 
     # Create session and cache
-    session = requests.Session()
+    session = build_wiki_session()
     cache = Cache(args.cache_dir)
 
     # Search for candidates

@@ -34,6 +34,7 @@ from diskcache import Cache
 # Disambiguation imports (dual fallback pattern)
 try:
     from tools.disambiguation import (
+        build_wiki_session,
         search_wikipedia_candidates,
         fetch_candidate_info,
         disambiguate_search_results,
@@ -44,6 +45,7 @@ try:
     from tools.enrich_entities import srt_time_to_seconds
 except ImportError:
     from disambiguation import (
+        build_wiki_session,
         search_wikipedia_candidates,
         fetch_candidate_info,
         disambiguate_search_results,
@@ -486,11 +488,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"Cache: {args.cache_dir}")
     print()
 
-    # Create shared session
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "B-Roll-Finder/1.0 (Wikipedia disambiguation)"
-    })
+    # Create shared session (authenticated if token available)
+    session = build_wiki_session(user_agent="B-Roll-Finder/1.0 (Wikipedia disambiguation)")
 
     # Run disambiguation in parallel
     results: Dict[str, Optional[dict]] = {}

@@ -56,6 +56,18 @@ WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
 USER_AGENT = "B-Roll-Finder/1.0 (automated Wikipedia disambiguation)"
 
 
+def build_wiki_session(user_agent: str = USER_AGENT) -> requests.Session:
+    """Build session with optional Wikipedia API auth (5000 vs 500 req/hr)."""
+    import os
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": user_agent})
+    access_token = os.environ.get("WIKIPEDIA_API_ACCESS_TOKEN")
+    if access_token:
+        session.headers.update({"Authorization": f"Bearer {access_token}"})
+    return session
+
+
 # =============================================================================
 # Quality Tracking and Confidence Routing
 # =============================================================================
