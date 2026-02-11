@@ -13,6 +13,9 @@ Env (OpenAI-compatible):
   - OPENAI_API_KEY (required for provider=openai)
   - OPENAI_API_BASE (optional; defaults to https://api.openai.com/v1)
 
+Env (Anthropic):
+  - ANTHROPIC_API_KEY (required for provider=anthropic)
+
 Env (Ollama):
   - OLLAMA_HOST (default http://127.0.0.1:11434)
 """
@@ -39,7 +42,7 @@ from requests.exceptions import HTTPError, ConnectionError, Timeout
 load_dotenv()
 
 # Retry configuration for transient API errors
-RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504, 529}
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0  # seconds, will use exponential backoff
 
@@ -149,6 +152,7 @@ def call_llm_extract(
     openai_api_key: Optional[str],
     openai_api_base: Optional[str],
     ollama_host: Optional[str],
+    anthropic_api_key: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     """
     Returns a dict with keys: people, places, concepts, events -> list[str]
@@ -211,6 +215,56 @@ def call_llm_extract(
         else:
             if last_error:
                 raise last_error
+    elif provider == "anthropic":
+        headers = {
+            "x-api-key": anthropic_api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": model,
+            "max_tokens": 1024,
+            "system": system_prompt,
+            "messages": [
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+        }
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers, json=body, timeout=60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Anthropic returns content as a list of blocks
+                content_blocks = data.get("content", [])
+                content = "".join(
+                    block.get("text", "") for block in content_blocks
+                    if block.get("type") == "text"
+                )
+                break
+            except HTTPError as e:
+                if e.response is not None and e.response.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] {e.response.status_code} error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+            except (ConnectionError, Timeout) as e:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"    [Retry {attempt+1}/{MAX_RETRIES}] Connection error, waiting {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    last_error = e
+                else:
+                    raise
+        else:
+            if last_error:
+                raise last_error
     elif provider == "ollama":
         host = ollama_host or "http://127.0.0.1:11434"
         body = {
@@ -250,7 +304,7 @@ def call_llm_extract(
             if last_error:
                 raise last_error
     else:
-        raise ValueError("Unsupported provider. Use 'openai' or 'ollama'.")
+        raise ValueError("Unsupported provider. Use 'openai', 'anthropic', or 'ollama'.")
 
     # Extract JSON from content
     match = re.search(r"\{[\s\S]*\}", content)
@@ -366,7 +420,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Extract entities per SRT cue and emit entities_map.json")
     parser.add_argument("--srt", required=True, help="Path to SRT transcript")
     parser.add_argument("--out", required=True, help="Output JSON path (entities_map.json)")
-    parser.add_argument("--provider", choices=["openai", "ollama"], default="openai")
+    parser.add_argument("--provider", choices=["openai", "anthropic", "ollama"], default="openai")
     parser.add_argument("--model", required=True, help="Model name (e.g., gpt-4o-mini or llama3)")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between LLM calls (seconds)")
     parser.add_argument("--fps", type=float, default=25.0, help="FPS for HH:MM:SS:FF timecodes (default: 25.0)")
@@ -380,6 +434,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     openai_api_key = os.environ.get("OPENAI_API_KEY")
     openai_api_base = os.environ.get("OPENAI_API_BASE")
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
     ollama_host = os.environ.get("OLLAMA_HOST")
 
     total = len(cues)
@@ -401,6 +456,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             openai_api_key=openai_api_key,
             openai_api_base=openai_api_base,
             ollama_host=ollama_host,
+            anthropic_api_key=anthropic_api_key,
         )
         # Update place frequency regardless of throttling (use canonical names)
         for surface, canonical in _parse_entity_list(ent.get("places") or []):

@@ -497,20 +497,58 @@ The generated FCP 7 XML uses DaVinci-compatible file references:
 Create `broll_config.yaml` for project defaults:
 
 ```yaml
-timeline:
-  fps: 24
-  duration: 4
-  gap: 2
-  tracks: 4
-
-provider: openai
-model: gpt-4o-mini
-
 images_per_entity: 3
 allow_non_pd: false
+fps: 25.0
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
 ```
 
 Override with CLI flags or environment variables.
+
+### LLM Role Configuration
+
+Each pipeline step that uses an LLM has a **role name**. You can configure the provider and model per-role in `broll_config.yaml`:
+
+```yaml
+llm:
+  # Global defaults
+  provider: openai
+  model: gpt-4o-mini
+
+  # Per-role overrides (all optional)
+  roles:
+    extract:
+      provider: openai
+      model: gpt-4o-mini
+    extract-visuals:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+    summarize:
+      model: claude-sonnet-4-5-20250929
+    strategies:
+      model: claude-sonnet-4-5-20250929
+    disambiguate:
+      model: claude-sonnet-4-5-20250929
+```
+
+**Available roles:**
+
+| Role | Step | Default Provider | Default Model | Constraint |
+|------|------|------------------|---------------|------------|
+| `extract` | Entity extraction | openai | gpt-4o-mini | — |
+| `extract-visuals` | Visual element extraction | anthropic | claude-haiku-4-5-20251001 | — |
+| `summarize` | Transcript summary | anthropic | claude-sonnet-4-5-20250929 | Requires Anthropic |
+| `strategies` | Search strategy generation | anthropic | claude-sonnet-4-5-20250929 | Requires Anthropic |
+| `disambiguate` | Wikipedia disambiguation | anthropic | claude-sonnet-4-5-20250929 | Requires Anthropic |
+
+**Precedence order:** CLI flags (`--provider`, `--model`) > per-role config > global config > hardcoded defaults.
+
+**Provider constraints:** The `summarize`, `strategies`, and `disambiguate` roles use Anthropic's structured outputs API (`client.beta.messages.parse`). If you configure a non-Anthropic provider for these roles, the pipeline will warn on stderr and override to Anthropic. Swapping to a different Anthropic model (e.g. Haiku) is allowed.
+
+Use `python broll.py status` to see the resolved provider/model for each role.
 
 ---
 

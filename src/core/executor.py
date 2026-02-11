@@ -5,10 +5,43 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 # Pipeline step definitions
 STEPS = ["extract", "enrich", "strategies", "disambiguate", "download", "xml"]
+
+# Roles that require Anthropic (they use client.beta.messages.parse)
+_PROVIDER_CONSTRAINTS = {
+    "summarize": "anthropic",
+    "strategies": "anthropic",
+    "disambiguate": "anthropic",
+}
+
+# Map pipeline steps to their LLM role names
+_STEP_ROLE_MAP = {
+    "extract": "extract",
+    "strategies": "strategies",
+    "disambiguate": "disambiguate",
+}
+
+
+def _resolve_llm_for_role(config: dict, role: str) -> Tuple[str, str]:
+    """Resolve (provider, model) for a pipeline role."""
+    llm = config.get("llm", {})
+    global_provider = llm.get("provider", "openai")
+    global_model = llm.get("model", "gpt-4o-mini")
+
+    role_cfg = llm.get("roles", {}).get(role, {})
+    provider = role_cfg.get("provider") or global_provider
+    model = role_cfg.get("model") or global_model
+
+    constraint = _PROVIDER_CONSTRAINTS.get(role)
+    if constraint and provider != constraint:
+        provider = constraint
+        if not role_cfg.get("model"):
+            model = "claude-sonnet-4-5-20250929"
+
+    return provider, model
 
 
 @dataclass
@@ -68,8 +101,7 @@ class PipelineExecutor:
         cmd = [sys.executable, str(script)]
 
         if step == "extract":
-            provider = llm.get("provider", "openai")
-            model = llm.get("model", "gpt-4o-mini")
+            provider, model = _resolve_llm_for_role(self.config, "extract")
             fps = self.config.get("fps", 25.0)
             cmd.extend([
                 "--srt", str(self.srt_path),
@@ -90,18 +122,22 @@ class PipelineExecutor:
             ])
 
         elif step == "strategies":
+            _, model = _resolve_llm_for_role(self.config, "strategies")
             cmd.extend([
                 "--map", str(entities_path),
                 "--out", str(self.output_dir / "strategies_entities.json"),
+                "--model", model,
             ])
 
         elif step == "disambiguate":
+            _, model = _resolve_llm_for_role(self.config, "disambiguate")
             parallel = self.config.get("disambig_parallel", 10)
             min_priority = self.config.get("min_priority", 0.5)
             cmd.extend([
                 "--map", str(entities_path),
                 "--parallel", str(parallel),
                 "--min-priority", str(min_priority),
+                "--model", model,
             ])
 
         elif step == "download":

@@ -34,6 +34,37 @@ import config  # noqa: F401
 
 import requests
 
+# Retry configuration for transient API errors (429, 529 overloaded, 5xx)
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504, 529}
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 2.0  # seconds, exponential backoff
+
+
+def _post_with_retry(url: str, headers: dict, body: dict, timeout: int) -> requests.Response:
+    """POST with exponential-backoff retry on transient HTTP errors."""
+    last_error: Optional[Exception] = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+            if resp.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"    [Retry {attempt+1}/{MAX_RETRIES}] {resp.status_code} error, "
+                      f"waiting {delay:.1f}s...", file=sys.stderr)
+                time.sleep(delay)
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.ConnectionError as e:
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"    [Retry {attempt+1}/{MAX_RETRIES}] Connection error, "
+                      f"waiting {delay:.1f}s...", file=sys.stderr)
+                time.sleep(delay)
+                last_error = e
+            else:
+                raise
+    raise last_error  # type: ignore[misc]
+
 
 @dataclass
 class SrtCue:
@@ -241,13 +272,12 @@ Return valid JSON only."""
                 {"role": "user", "content": f"{system_prompt}\n\n{user_prompt}"}
             ],
         }
-        resp = requests.post(
+        resp = _post_with_retry(
             "https://api.anthropic.com/v1/messages",
             headers=headers,
-            json=body,
+            body=body,
             timeout=60,
         )
-        resp.raise_for_status()
         data = resp.json()
         content = data["content"][0]["text"]
 
@@ -262,8 +292,12 @@ Return valid JSON only."""
             ],
             "temperature": 0.2,
         }
-        resp = requests.post(f"{base}/chat/completions", headers=headers, json=body, timeout=60)
-        resp.raise_for_status()
+        resp = _post_with_retry(
+            f"{base}/chat/completions",
+            headers=headers,
+            body=body,
+            timeout=60,
+        )
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
 
@@ -576,13 +610,12 @@ Use empty arrays [] when nothing found. Return valid JSON only."""
                 {"role": "user", "content": f"{system_prompt}\n\n{user_prompt}"}
             ],
         }
-        resp = requests.post(
+        resp = _post_with_retry(
             "https://api.anthropic.com/v1/messages",
             headers=headers,
-            json=body,
+            body=body,
             timeout=120,
         )
-        resp.raise_for_status()
         data = resp.json()
         content = data["content"][0]["text"]
 
@@ -597,8 +630,12 @@ Use empty arrays [] when nothing found. Return valid JSON only."""
             ],
             "temperature": 0.2,
         }
-        resp = requests.post(f"{base}/chat/completions", headers=headers, json=body, timeout=120)
-        resp.raise_for_status()
+        resp = _post_with_retry(
+            f"{base}/chat/completions",
+            headers=headers,
+            body=body,
+            timeout=120,
+        )
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
 

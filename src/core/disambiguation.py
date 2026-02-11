@@ -445,6 +445,7 @@ def disambiguate_entity(
     video_topic: str,
     client: Anthropic,
     era: str = "",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> DisambiguationDecision:
     """Use Claude to select best Wikipedia candidate.
 
@@ -518,7 +519,7 @@ This video covers the era: {era}
 - For places: Prefer the historical name/article relevant to this era."""
 
     response = client.beta.messages.parse(
-        model="claude-sonnet-4-5-20250929",
+        model=model,
         max_tokens=1024,
         betas=["structured-outputs-2025-11-13"],
         messages=[{"role": "user", "content": prompt}],
@@ -545,6 +546,7 @@ def resolve_disambiguation(
     max_depth: int = 3,
     current_depth: int = 0,
     era: str = "",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> Optional[DisambiguationDecision]:
     """Resolve disambiguation page with depth limit.
 
@@ -622,6 +624,7 @@ def resolve_disambiguation(
         video_topic=video_topic,
         client=client,
         era=era,
+        model=model,
     )
 
     # Recursively check if chosen article is also a disambiguation page
@@ -638,6 +641,7 @@ def resolve_disambiguation(
             max_depth,
             current_depth + 1,
             era=era,
+            model=model,
         )
 
     return decision
@@ -658,6 +662,7 @@ def disambiguate_search_results(
     client: Anthropic,
     cache: Cache,
     era: str = "",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> DisambiguationDecision:
     """Main entry point for disambiguation.
 
@@ -705,6 +710,7 @@ def disambiguate_search_results(
                 client,
                 cache,
                 era=era,
+                model=model,
             )
             if decision:
                 return decision
@@ -751,6 +757,7 @@ def disambiguate_search_results(
         video_topic=video_topic,
         client=client,
         era=era,
+        model=model,
     )
 
     return decision

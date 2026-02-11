@@ -204,6 +204,7 @@ def generate_batch_strategies(
     client: Anthropic,
     era: str = "",
     pervasive_entities: Optional[List[str]] = None,
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> List[SearchStrategy]:
     """Generate search strategies for a batch of entities using Claude.
 
@@ -277,7 +278,7 @@ These entities are broad background/setting references: {pervasive_list}
 """
 
     response = client.beta.messages.parse(
-        model="claude-sonnet-4-5-20250929",
+        model=model,
         max_tokens=2048,
         betas=["structured-outputs-2025-11-13"],
         messages=[{"role": "user", "content": prompt}],
@@ -293,6 +294,7 @@ def generate_search_strategies(
     batch_size: int = 7,
     era: str = "",
     pervasive_entities: Optional[List[str]] = None,
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> dict:
     """Generate search strategies for all entities in enriched_map.
 
@@ -375,6 +377,7 @@ def generate_search_strategies(
             strategies = generate_batch_strategies(
                 batch, video_context, client,
                 era=era, pervasive_entities=pervasive_entities,
+                model=model,
             )
 
             # Merge strategies into entities
@@ -400,6 +403,7 @@ def generate_search_strategies(
                     strategies = generate_batch_strategies(
                         single_batch, video_context, client,
                         era=era, pervasive_entities=pervasive_entities,
+                        model=model,
                     )
 
                     entities[entity_name]["search_strategies"] = {
@@ -570,6 +574,10 @@ def main(argv: List[str] = None) -> int:
         "--summary",
         help="Path to transcript_summary.json (for era and pervasive entities)"
     )
+    parser.add_argument(
+        "--model", default="claude-sonnet-4-5-20250929",
+        help="Anthropic model for strategy generation (default: claude-sonnet-4-5-20250929)"
+    )
 
     args = parser.parse_args(argv)
 
@@ -661,6 +669,7 @@ def main(argv: List[str] = None) -> int:
                 batch_size=args.batch_size,
                 era=era,
                 pervasive_entities=pervasive_entities,
+                model=args.model,
             )
         except Exception as e:
             print(f"Error: Failed to generate strategies: {e}", file=sys.stderr)

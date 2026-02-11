@@ -311,6 +311,7 @@ def download_entity(
     video_topic: str = "Unknown video",
     session: Optional[requests.Session] = None,
     era_year_range: Optional[Tuple[int, int]] = None,
+    disambiguation_model: str = "claude-sonnet-4-5-20250929",
 ) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
     Download images for a single entity with disambiguation support.
@@ -385,7 +386,8 @@ def download_entity(
                 search_results=candidates,
                 session=session,
                 client=disambiguation_client,
-                cache=disambiguation_cache
+                cache=disambiguation_cache,
+                model=disambiguation_model,
             )
 
             # Process result

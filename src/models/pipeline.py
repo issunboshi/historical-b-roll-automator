@@ -68,13 +68,24 @@ class PipelineCheckpoint(BaseModel):
         )
 
 
+class RoleConfig(BaseModel):
+    """Per-role LLM override configuration."""
+
+    provider: Optional[str] = Field(default=None, description="LLM provider override")
+    model: Optional[str] = Field(default=None, description="Model name override")
+
+
 class LLMConfig(BaseModel):
-    """LLM provider configuration."""
+    """LLM provider configuration with optional per-role overrides."""
 
     provider: str = Field(default="openai", description="LLM provider (openai, ollama)")
     model: str = Field(default="gpt-4o-mini", description="Model name")
     visuals_model: Optional[str] = Field(
-        default=None, description="Model for visual element extraction"
+        default=None, description="Deprecated: use roles.extract-visuals.model instead"
+    )
+    roles: Dict[str, RoleConfig] = Field(
+        default_factory=dict,
+        description="Per-role LLM overrides keyed by pipeline role name",
     )
 
 

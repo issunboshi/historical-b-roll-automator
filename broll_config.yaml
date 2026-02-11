@@ -6,6 +6,27 @@ broll_track_count: 4
 broll_track_name_prefix: "B-roll"
 allow_non_pd: false
 llm:
+  # Global default provider and model
   provider: openai
   model: gpt-4o-mini
+
+  # Per-role overrides (all optional — omit to use global defaults)
+  # Roles: extract, extract-visuals, summarize, strategies, disambiguate
+  # Note: summarize, strategies, and disambiguate require Anthropic provider
+  roles:
+    extract:
+      provider: anthropic
+      model: claude-opus-4-6
+    extract-visuals:
+      provider: anthropic
+      model: claude-sonnet-4-5
+    summarize:
+      provider: anthropic
+      model: claude-sonnet-4-5
+    strategies:
+      provider: anthropic
+      model: claude-opus-4-6
+    disambiguate:
+      provider: anthropic
+      model: claude-sonnet-4-6
 
