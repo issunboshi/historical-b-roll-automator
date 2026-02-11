@@ -48,6 +48,7 @@ _SVG_IMPORT_FAILED_WARNED: bool = False
 
 # Basename blacklist patterns to skip (case-insensitive, substring match)
 BLACKLIST_BASENAME_PATTERNS = [
+    # Wikimedia project logos
     "wikisource-logo",
     "commons-logo",
     "disambig_gray",
@@ -63,6 +64,33 @@ BLACKLIST_BASENAME_PATTERNS = [
     "wikidata-logo",
     "wikipedia-logo",
     "wikimedia-logo",
+    # Wikipedia UI/maintenance icons
+    "oojs_ui",
+    "oojs-ui",
+    "question_book",
+    "question-book",
+    "globe_of_letters",
+    "global_thinking",
+    "search_icon",
+    "edit-clear",
+    "text-x-generic",
+    "folder-hexagon",
+    "increase2",
+    "decrease2",
+    "steady2",
+    "ambox",
+    "unbalanced_scales",
+    "merge-arrow",
+    "padlock",
+    "lock-",
+    "semi-protection",
+    "fully-protected",
+    "pp-",
+    "nuvola",
+    "crystal_clear",
+    "crystal-clear",
+    "gnome-",
+    "gnome_",
 ]
 
 
