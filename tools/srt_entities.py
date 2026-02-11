@@ -42,7 +42,7 @@ from requests.exceptions import HTTPError, ConnectionError, Timeout
 load_dotenv()
 
 # Retry configuration for transient API errors
-RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504, 529}
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0  # seconds, will use exponential backoff
 
