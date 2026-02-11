@@ -645,7 +645,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--model",
-        help="Model name (default: claude-3-5-haiku-20241022 for anthropic, gpt-4o-mini for openai)",
+        help="Model name (default: claude-haiku-4-5-20251001 for anthropic, gpt-4o-mini for openai)",
     )
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between LLM calls (seconds)")
     parser.add_argument("--fps", type=float, default=25.0, help="FPS for timecode conversion")
@@ -688,7 +688,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Set default model based on provider
     if not args.model:
-        args.model = "claude-3-5-haiku-20241022" if args.provider == "anthropic" else "gpt-4o-mini"
+        args.model = "claude-haiku-4-5-20251001" if args.provider == "anthropic" else "gpt-4o-mini"
 
     # Load API key
     if args.provider == "anthropic":
