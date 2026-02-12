@@ -204,6 +204,9 @@ python broll.py download --map strategies_entities.json --min-priority 0.5 -v
 
 # 10. Generate timeline XML
 python broll.py xml --map strategies_entities.json --max-placements 3 --pervasive-max 2
+
+# Utility: Inject a manually-sourced image
+python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --image coat_of_arms.jpg
 ```
 
 ### Command Reference
@@ -314,6 +317,29 @@ python broll.py xml --map strategies_entities.json --max-placements 3 --pervasiv
 | `--max-placements N` | Max clip placements per entity (default: 3) |
 | `--pervasive-max N` | Max placements for pervasive entities (default: 2) |
 | `--summary-file PATH` | Path to transcript_summary.json |
+
+#### inject
+
+Manually inject images into an entity's image list. Useful for adding images sourced outside the Wikipedia pipeline (e.g., coats of arms, custom artwork).
+
+```bash
+python broll.py inject --map entities_map.json --entity "Garnet Wolseley" \
+    --image /path/to/coat_of_arms.jpg --category public_domain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--map PATH` | Path to entities_map.json (required) |
+| `--entity NAME` | Entity name, must exist in map (required) |
+| `--image PATH` | Path to image file, can be repeated (required) |
+| `--category CAT` | License category (default: `public_domain`) |
+| `--license TEXT` | License short name (e.g. "CC BY 4.0") |
+| `--license-url URL` | License URL |
+| `--source-url URL` | Where the image was sourced from |
+| `--author TEXT` | Image author/creator |
+| `--title TEXT` | Image title |
+
+If the entity has a `download_dir`, images are copied into the appropriate license subdirectory. Images are re-sorted by license priority after injection.
 
 #### status
 ```bash
