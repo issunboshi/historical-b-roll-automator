@@ -1230,18 +1230,15 @@ def cmd_inject(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     with open(map_path, "r") as f:
         entities_map = json.load(f)
 
-    # Find the entity
+    # Find the entity (entities is a dict keyed by name)
     entity_name = args.entity
-    entity_data = None
-    for ent in entities_map.get("entities", []):
-        if ent.get("name") == entity_name:
-            entity_data = ent
-            break
+    entities = entities_map.get("entities", {})
+    entity_data = entities.get(entity_name)
 
     if entity_data is None:
         print(f"Error: entity '{entity_name}' not found in {map_path}", file=sys.stderr)
-        available = [e.get("name", "?") for e in entities_map.get("entities", [])]
-        print(f"Available entities: {', '.join(available[:20])}", file=sys.stderr)
+        available = list(entities.keys())[:20]
+        print(f"Available entities: {', '.join(available)}", file=sys.stderr)
         return 1
 
     # Validate image files
