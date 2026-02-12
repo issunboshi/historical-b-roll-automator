@@ -137,7 +137,7 @@ python broll.py pipeline --srt video.srt [options]
 | `--duration, -d N` | — | Clip duration in seconds |
 | `--gap, -g N` | — | Min gap between clips in seconds |
 | `--tracks, -t N` | — | Number of b-roll tracks |
-| `--allow-non-pd` | — | Include non-public-domain images |
+| `--allow-non-pd` | — | Include non-public-domain images (PD images preferred first) |
 | `--timeline-name TEXT` | — | Custom timeline name |
 
 ### Parallelism & Rate Limiting
@@ -307,7 +307,7 @@ python broll.py xml --map strategies_entities.json --max-placements 3 --pervasiv
 | `--duration, -d N` | Clip duration in seconds |
 | `--gap, -g N` | Min gap between clips |
 | `--tracks, -t N` | Number of B-roll tracks |
-| `--allow-non-pd` | Include non-public-domain images |
+| `--allow-non-pd` | Include non-public-domain images; generates `.attribution.txt` for non-PD images used |
 | `--timeline-name TEXT` | Custom timeline name |
 | `--min-match-quality` | Quality filter: `high`, `medium`, `low`, `none` |
 | `--montage-clip-duration N` | Duration per montage image (default: 0.6s) |
@@ -754,6 +754,8 @@ Images are organized by license:
 - `unknown` — License not detected
 
 Attribution files are created for non-public-domain images.
+
+When `--allow-non-pd` is enabled, images are sorted by license preference (public domain first, then CC-BY, CC-BY-SA, etc.) so that PD images are used before more restrictive alternatives. The XML generator also writes a `.attribution.txt` file next to the output XML listing every non-PD image placed on the timeline, with license and suggested attribution for each.
 
 ---
 

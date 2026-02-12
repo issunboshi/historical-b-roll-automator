@@ -514,10 +514,21 @@ def download_entity(
     return (entity_name, False, entity_dir, None, disambiguation_result)
 
 
+LICENSE_PRIORITY = {
+    "public_domain": 0,
+    "cc_by": 1,
+    "cc_by_sa": 2,
+    "other_cc": 3,
+    "unknown": 4,
+    "restricted_nonfree": 5,
+}
+
+
 def harvest_images(entity_dir: Path) -> List[Dict[str, str]]:
     """
     Read downloaded image info from entity directory.
-    Returns list of image metadata dicts.
+    Returns list of image metadata dicts, sorted by license preference
+    (public domain first, then progressively more restrictive licenses).
     """
     summary_rows = read_download_summary(entity_dir)
     if not summary_rows:
@@ -574,7 +585,11 @@ def harvest_images(entity_dir: Path) -> List[Dict[str, str]]:
             entry["suggested_attribution"] = a.get("suggested_attribution", "")
         
         images_payload.append(entry)
-    
+
+    # Sort by license preference: PD first, then progressively more restrictive.
+    # Stable sort preserves original order within the same category.
+    images_payload.sort(key=lambda img: LICENSE_PRIORITY.get(img.get("category", ""), 99))
+
     return images_payload
 
 
