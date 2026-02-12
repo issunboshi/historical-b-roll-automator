@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -1217,6 +1218,96 @@ def cmd_status(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     return 0
 
 
+def cmd_inject(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Inject manually-sourced images into an entity's image list."""
+    from tools.download_entities import LICENSE_PRIORITY
+
+    map_path = Path(args.map)
+    if not map_path.exists():
+        print(f"Error: entities_map not found: {map_path}", file=sys.stderr)
+        return 1
+
+    with open(map_path, "r") as f:
+        entities_map = json.load(f)
+
+    # Find the entity
+    entity_name = args.entity
+    entity_data = None
+    for ent in entities_map.get("entities", []):
+        if ent.get("name") == entity_name:
+            entity_data = ent
+            break
+
+    if entity_data is None:
+        print(f"Error: entity '{entity_name}' not found in {map_path}", file=sys.stderr)
+        available = [e.get("name", "?") for e in entities_map.get("entities", [])]
+        print(f"Available entities: {', '.join(available[:20])}", file=sys.stderr)
+        return 1
+
+    # Validate image files
+    image_paths: List[Path] = []
+    for img_str in args.image:
+        p = Path(img_str).resolve()
+        if not p.exists():
+            print(f"Error: image file not found: {p}", file=sys.stderr)
+            return 1
+        if not p.is_file():
+            print(f"Error: not a file: {p}", file=sys.stderr)
+            return 1
+        image_paths.append(p)
+
+    # Optionally copy images into the entity's download directory
+    entity_dir = entity_data.get("download_dir")
+    category = args.category or "public_domain"
+    final_paths: List[Path] = []
+
+    if entity_dir:
+        dest_dir = Path(entity_dir) / category
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for p in image_paths:
+            dest = dest_dir / p.name
+            if dest.resolve() != p.resolve():
+                shutil.copy2(p, dest)
+                print(f"  Copied {p.name} -> {dest}")
+            final_paths.append(dest)
+    else:
+        final_paths = image_paths
+
+    # Build image metadata entries (same 10 fields as harvest_images)
+    injected = []
+    for fp in final_paths:
+        entry = {
+            "path": str(fp),
+            "filename": fp.name,
+            "category": category,
+            "license_short": args.license or "",
+            "license_url": args.license_url or "",
+            "source_url": args.source_url or "",
+            "title": args.title or "",
+            "author": args.author or "",
+            "usage_terms": "",
+            "suggested_attribution": "",
+        }
+        injected.append(entry)
+
+    # Append to entity's images and re-sort by license priority
+    images = entity_data.get("images", [])
+    images.extend(injected)
+    images.sort(key=lambda img: LICENSE_PRIORITY.get(img.get("category", ""), 99))
+    entity_data["images"] = images
+
+    # Write back
+    with open(map_path, "w") as f:
+        json.dump(entities_map, f, indent=2, ensure_ascii=False)
+
+    print(f"\nInjected {len(injected)} image(s) into '{entity_name}':")
+    for entry in injected:
+        print(f"  {entry['filename']}  [{entry['category']}]  {entry['path']}")
+    print(f"\nEntity now has {len(images)} total image(s).")
+    print(f"Updated: {map_path}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="B-Roll Finder - Unified pipeline for generating B-roll from transcripts",
@@ -1457,7 +1548,29 @@ Examples:
         "status",
         help="Show configuration and check script availability",
     )
-    
+
+    # Inject command — manually add images to an entity
+    p_inject = subparsers.add_parser(
+        "inject",
+        help="Inject manually-sourced images into an entity's image list",
+    )
+    p_inject.add_argument("--map", required=True, help="Path to entities_map.json")
+    p_inject.add_argument("--entity", required=True, help="Entity name (must exist in map)")
+    p_inject.add_argument("--image", required=True, action="append",
+                          help="Path to image file (can be repeated)")
+    p_inject.add_argument("--category", default="public_domain",
+                          help="License category (default: public_domain)")
+    p_inject.add_argument("--license", default="",
+                          help="License short name (e.g. 'CC BY 4.0')")
+    p_inject.add_argument("--license-url", default="",
+                          help="License URL")
+    p_inject.add_argument("--source-url", default="",
+                          help="Where the image was sourced from")
+    p_inject.add_argument("--author", default="",
+                          help="Image author/creator")
+    p_inject.add_argument("--title", default="",
+                          help="Image title")
+
     args = parser.parse_args(argv)
     
     if not args.command:
@@ -1481,6 +1594,7 @@ Examples:
         "disambiguate": cmd_disambiguate,
         "xml": cmd_xml,
         "status": cmd_status,
+        "inject": cmd_inject,
     }
     
     handler = handlers.get(args.command)
