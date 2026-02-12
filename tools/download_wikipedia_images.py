@@ -309,8 +309,9 @@ def filter_out_ui_icons(file_titles: List[str]) -> List[str]:
     blacklist_regex = re.compile("|".join(blacklist_patterns), re.IGNORECASE)
     filtered: List[str] = []
     for t in file_titles:
-        # Only test the basename to avoid false positives in long titles
-        basename = t.split(":", 1)[-1]
+        # Only test the basename to avoid false positives in long titles.
+        # Normalize spaces to underscores so patterns match both URL and display forms.
+        basename = t.split(":", 1)[-1].replace(" ", "_")
         if blacklist_regex.search(basename):
             continue
         filtered.append(t)
@@ -338,8 +339,10 @@ def is_probably_non_image_title(file_title: str) -> bool:
 def match_blacklist_pattern(file_title: str) -> Optional[str]:
     """
     Return the blacklist pattern that matches this title's basename, if any.
+    Normalizes spaces to underscores so patterns match regardless of whether
+    the title uses underscores (URL form) or spaces (display form).
     """
-    basename = file_title.split(":", 1)[-1].lower()
+    basename = file_title.split(":", 1)[-1].lower().replace(" ", "_")
     for pattern in BLACKLIST_BASENAME_PATTERNS:
         if pattern in basename:
             return pattern
