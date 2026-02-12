@@ -91,6 +91,19 @@ BLACKLIST_BASENAME_PATTERNS = [
     "crystal-clear",
     "gnome-",
     "gnome_",
+    # Map markers and indicator dots
+    "_pog.",
+    "red_pog",
+    "blue_pog",
+    "green_pog",
+    "yellow_pog",
+    "orange_pog",
+    "white_pog",
+    "black_pog",
+    "grey_pog",
+    "purple_pog",
+    "location_dot",
+    "map_marker",
 ]
 
 
