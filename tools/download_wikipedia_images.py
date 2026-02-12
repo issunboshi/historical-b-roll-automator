@@ -693,20 +693,35 @@ def query_image_metadata(session: requests.Session, file_titles: List[str]) -> D
         resp = http_get(session, WIKIPEDIA_API, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        pages = data.get("query", {}).get("pages", []) or []
+        query_data = data.get("query", {})
+
+        # Build reverse maps from API normalization/redirect info so we can
+        # look up metadata by the original (non-canonical) title too.
+        norm_reverse: Dict[str, List[str]] = {}  # canonical -> [original inputs]
+        for entry in query_data.get("normalized", []):
+            norm_reverse.setdefault(entry["to"], []).append(entry["from"])
+        for entry in query_data.get("redirects", []):
+            norm_reverse.setdefault(entry["to"], []).append(entry["from"])
+
+        pages = query_data.get("pages", []) or []
         for page in pages:
             title = page.get("title")
             imageinfo = page.get("imageinfo") or []
             if not title or not imageinfo:
                 continue
             info = imageinfo[0]
-            results[title] = {
+            entry = {
                 "title": title,
                 "url": info.get("url"),
                 "mime": info.get("mime"),
                 "size": {"width": info.get("width"), "height": info.get("height")},
                 "extmetadata": info.get("extmetadata", {}),
             }
+            results[title] = entry
+            # Also store under original input titles that normalized/redirected
+            # to this canonical title, so callers can look up by either form.
+            for orig in norm_reverse.get(title, []):
+                results[orig] = entry
         time.sleep(REQUEST_DELAY_S)  # be polite
     return results
 
