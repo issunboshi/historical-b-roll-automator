@@ -1042,6 +1042,12 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         mark_step_completed(checkpoint, "disambiguate")
         save_checkpoint(output_dir, checkpoint)
 
+    # Snapshot pre-download state (strategies + disambiguation, before images added)
+    if "download" in steps_to_run and strategies_entities_path.exists():
+        pre_download_path = output_dir / "pre_download_entities.json"
+        shutil.copy2(strategies_entities_path, pre_download_path)
+        print(f"\n  Snapshot saved: {pre_download_path.name}")
+
     # Step 6: Download images (now much faster with pre-computed disambiguation)
     if "download" in steps_to_run:
         download_args = argparse.Namespace(
