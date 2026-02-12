@@ -104,6 +104,8 @@ BLACKLIST_BASENAME_PATTERNS = [
     "purple_pog",
     "location_dot",
     "map_marker",
+    # Audio/media icons
+    "speaker_icon",
 ]
 
 
@@ -309,8 +311,9 @@ def filter_out_ui_icons(file_titles: List[str]) -> List[str]:
     blacklist_regex = re.compile("|".join(blacklist_patterns), re.IGNORECASE)
     filtered: List[str] = []
     for t in file_titles:
-        # Only test the basename to avoid false positives in long titles
-        basename = t.split(":", 1)[-1]
+        # Only test the basename to avoid false positives in long titles.
+        # Normalize spaces to underscores so patterns match both URL and display forms.
+        basename = t.split(":", 1)[-1].replace(" ", "_")
         if blacklist_regex.search(basename):
             continue
         filtered.append(t)
@@ -338,8 +341,10 @@ def is_probably_non_image_title(file_title: str) -> bool:
 def match_blacklist_pattern(file_title: str) -> Optional[str]:
     """
     Return the blacklist pattern that matches this title's basename, if any.
+    Normalizes spaces to underscores so patterns match regardless of whether
+    the title uses underscores (URL form) or spaces (display form).
     """
-    basename = file_title.split(":", 1)[-1].lower()
+    basename = file_title.split(":", 1)[-1].lower().replace(" ", "_")
     for pattern in BLACKLIST_BASENAME_PATTERNS:
         if pattern in basename:
             return pattern
@@ -1033,6 +1038,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 cutoff_info = datetime.datetime.now().year - 30
                 print(f"Prioritizing historical images first (<= {cutoff_info}).")
+
+        # Drop SVG titles when a PNG with the same base name exists in the list,
+        # since the PNG is preferred for timeline use and avoids a redundant download.
+        png_basenames = {t.rsplit(".", 1)[0].lower() for t in ordered_titles
+                         if t.lower().endswith(".png")}
+        before_svg_dedup = len(ordered_titles)
+        ordered_titles = [
+            t for t in ordered_titles
+            if not t.lower().endswith(".svg")
+            or t.rsplit(".", 1)[0].lower() not in png_basenames
+        ]
+        svg_dedup_count = before_svg_dedup - len(ordered_titles)
+        if svg_dedup_count:
+            print(f"Skipped {svg_dedup_count} SVG(s) that have PNG equivalents.")
 
         # Prepare root directory for this search term
         search_root = output_dir / safe_folder_name(query)
