@@ -104,6 +104,8 @@ BLACKLIST_BASENAME_PATTERNS = [
     "purple_pog",
     "location_dot",
     "map_marker",
+    # Audio/media icons
+    "speaker_icon",
 ]
 
 
