@@ -1039,6 +1039,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                 cutoff_info = datetime.datetime.now().year - 30
                 print(f"Prioritizing historical images first (<= {cutoff_info}).")
 
+        # Drop SVG titles when a PNG with the same base name exists in the list,
+        # since the PNG is preferred for timeline use and avoids a redundant download.
+        png_basenames = {t.rsplit(".", 1)[0].lower() for t in ordered_titles
+                         if t.lower().endswith(".png")}
+        before_svg_dedup = len(ordered_titles)
+        ordered_titles = [
+            t for t in ordered_titles
+            if not t.lower().endswith(".svg")
+            or t.rsplit(".", 1)[0].lower() not in png_basenames
+        ]
+        svg_dedup_count = before_svg_dedup - len(ordered_titles)
+        if svg_dedup_count:
+            print(f"Skipped {svg_dedup_count} SVG(s) that have PNG equivalents.")
+
         # Prepare root directory for this search term
         search_root = output_dir / safe_folder_name(query)
         ensure_directory(search_root)
