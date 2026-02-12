@@ -560,6 +560,7 @@ After generating the XML:
                         'total_images': num_montage_images,
                         'is_montage_clip': True,
                         'montage_duration_frames': montage_clip_frames,
+                        'image_meta': img,
                     })
             else:
                 # Standard single-image clip
@@ -579,6 +580,7 @@ After generating the XML:
                     'occurrence_index': idx,
                     'image_index': idx % len(filtered_images),
                     'total_images': len(filtered_images),
+                    'image_meta': img,
                 })
     
     if not clips:
@@ -635,6 +637,8 @@ After generating the XML:
             'path': clip['path'],
             'name': clip['name'],
             'duration_frames': clip_duration,
+            'entity': clip.get('entity', ''),
+            'image_meta': clip.get('image_meta', {}),
         })
         track_end[chosen_track] = clip_end
 
@@ -710,6 +714,31 @@ After generating the XML:
             lines = lines[1:]
         f.write('\n'.join(lines))
     
+    # Write attribution file for non-PD images used in the timeline
+    if args.allow_non_pd:
+        seen_filenames = set()
+        attribution_lines = []
+        for p in placements:
+            meta = p.get('image_meta', {})
+            cat = meta.get('category', '')
+            fn = meta.get('filename', '')
+            if cat == 'public_domain' or not fn or fn in seen_filenames:
+                continue
+            seen_filenames.add(fn)
+            entity = p.get('entity', '')
+            license_short = meta.get('license_short', cat)
+            suggested = meta.get('suggested_attribution', '')
+            attribution_lines.append(
+                f"Entity: {entity} | File: {fn} | License: {license_short} | {suggested}"
+            )
+
+        if attribution_lines:
+            attrib_path = output_path.with_suffix('.attribution.txt')
+            with open(attrib_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(attribution_lines) + '\n')
+            print(f"\nAttribution file: {attrib_path} ({len(attribution_lines)} non-PD images)",
+                  file=sys.stderr)
+
     print(f"\nGenerated: {output_path.absolute()}")
     print(f"""
 Next steps:
