@@ -106,6 +106,13 @@ BLACKLIST_BASENAME_PATTERNS = [
     "map_marker",
     # Audio/media icons
     "speaker_icon",
+    # Navigation/portal/category icons
+    "symbol_portal",
+    "symbol_category",
+    "symbol_list",
+    "symbol_book",
+    "arrow_blue",
+    "portal-puzzle",
 ]
 
 
@@ -215,6 +222,16 @@ def get_content_images(session: requests.Session, pageid: int) -> List[str]:
     content = soup.select_one(".mw-parser-output")
     if not content:
         content = soup  # fallback to whole document if structure changes
+
+    # Remove non-content containers that inject UI icons (navboxes, sister
+    # project bars, portal links, message boxes, succession boxes, etc.)
+    # These are inside .mw-parser-output but aren't article content.
+    for sel in content.select(
+        ".navbox, .sister-bar, .noprint, .mbox-image-div, "
+        ".portal-bar, .succession-box, .sistersitebox, .side-box"
+    ):
+        sel.decompose()
+
     file_titles: List[str] = []
     seen = set()
 
@@ -230,10 +247,12 @@ def get_content_images(session: requests.Session, pageid: int) -> List[str]:
             title = unquote(href[len("./"):]).replace("_", " ")
         elif href.startswith("/w/index.php"):
             # /w/index.php?title=File:Example.jpg&...
+            # Only extract if it's actually a File: page — red links to
+            # articles also use /w/index.php and would be misidentified.
             parsed = urlparse(href)
             qs = parse_qs(parsed.query)
             tvals = qs.get("title") or []
-            if tvals:
+            if tvals and tvals[0].startswith("File:"):
                 title = unquote(tvals[0]).replace("_", " ")
         elif "/wiki/Special:FilePath/" in href:
             # /wiki/Special:FilePath/Example.jpg → derive File: title
@@ -336,6 +355,18 @@ def is_probably_non_image_title(file_title: str) -> bool:
         ext = basename.rsplit(".", 1)[-1]
         return ext in non_image_exts
     return False
+
+
+def has_image_extension(file_title: str) -> bool:
+    """Check if the file title has a recognized image file extension."""
+    basename = file_title.split(":", 1)[-1].lower()
+    if "." not in basename:
+        return False
+    ext = basename.rsplit(".", 1)[-1]
+    return ext in {
+        "jpg", "jpeg", "png", "gif", "svg", "webp", "tif", "tiff",
+        "bmp", "ico", "xcf", "djvu", "pdf",
+    }
 
 
 def match_blacklist_pattern(file_title: str) -> Optional[str]:
@@ -693,20 +724,35 @@ def query_image_metadata(session: requests.Session, file_titles: List[str]) -> D
         resp = http_get(session, WIKIPEDIA_API, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        pages = data.get("query", {}).get("pages", []) or []
+        query_data = data.get("query", {})
+
+        # Build reverse maps from API normalization/redirect info so we can
+        # look up metadata by the original (non-canonical) title too.
+        norm_reverse: Dict[str, List[str]] = {}  # canonical -> [original inputs]
+        for entry in query_data.get("normalized", []):
+            norm_reverse.setdefault(entry["to"], []).append(entry["from"])
+        for entry in query_data.get("redirects", []):
+            norm_reverse.setdefault(entry["to"], []).append(entry["from"])
+
+        pages = query_data.get("pages", []) or []
         for page in pages:
             title = page.get("title")
             imageinfo = page.get("imageinfo") or []
             if not title or not imageinfo:
                 continue
             info = imageinfo[0]
-            results[title] = {
+            entry = {
                 "title": title,
                 "url": info.get("url"),
                 "mime": info.get("mime"),
                 "size": {"width": info.get("width"), "height": info.get("height")},
                 "extmetadata": info.get("extmetadata", {}),
             }
+            results[title] = entry
+            # Also store under original input titles that normalized/redirected
+            # to this canonical title, so callers can look up by either form.
+            for orig in norm_reverse.get(title, []):
+                results[orig] = entry
         time.sleep(REQUEST_DELAY_S)  # be polite
     return results
 
@@ -1081,6 +1127,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "source_url": "",
                             "reason": "blacklist_pattern",
                             "detail": bl_match,
+                        },
+                    )
+                except Exception:
+                    pass
+                continue
+            # Skip titles without a recognized image extension (e.g. red links
+            # to articles that were misidentified as File: pages)
+            if not has_image_extension(title_key):
+                print(f"[{idx}/{len(all_images)}] Skipping {title_key}: not an image file.")
+                try:
+                    append_failure_record(
+                        global_failed_csv_path,
+                        {
+                            "search_term": query,
+                            "file_title": title_key,
+                            "source_url": "",
+                            "reason": "no_image_extension",
+                            "detail": "",
                         },
                     )
                 except Exception:
