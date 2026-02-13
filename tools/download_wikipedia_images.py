@@ -247,10 +247,12 @@ def get_content_images(session: requests.Session, pageid: int) -> List[str]:
             title = unquote(href[len("./"):]).replace("_", " ")
         elif href.startswith("/w/index.php"):
             # /w/index.php?title=File:Example.jpg&...
+            # Only extract if it's actually a File: page — red links to
+            # articles also use /w/index.php and would be misidentified.
             parsed = urlparse(href)
             qs = parse_qs(parsed.query)
             tvals = qs.get("title") or []
-            if tvals:
+            if tvals and tvals[0].startswith("File:"):
                 title = unquote(tvals[0]).replace("_", " ")
         elif "/wiki/Special:FilePath/" in href:
             # /wiki/Special:FilePath/Example.jpg → derive File: title
@@ -353,6 +355,18 @@ def is_probably_non_image_title(file_title: str) -> bool:
         ext = basename.rsplit(".", 1)[-1]
         return ext in non_image_exts
     return False
+
+
+def has_image_extension(file_title: str) -> bool:
+    """Check if the file title has a recognized image file extension."""
+    basename = file_title.split(":", 1)[-1].lower()
+    if "." not in basename:
+        return False
+    ext = basename.rsplit(".", 1)[-1]
+    return ext in {
+        "jpg", "jpeg", "png", "gif", "svg", "webp", "tif", "tiff",
+        "bmp", "ico", "xcf", "djvu", "pdf",
+    }
 
 
 def match_blacklist_pattern(file_title: str) -> Optional[str]:
@@ -1113,6 +1127,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "source_url": "",
                             "reason": "blacklist_pattern",
                             "detail": bl_match,
+                        },
+                    )
+                except Exception:
+                    pass
+                continue
+            # Skip titles without a recognized image extension (e.g. red links
+            # to articles that were misidentified as File: pages)
+            if not has_image_extension(title_key):
+                print(f"[{idx}/{len(all_images)}] Skipping {title_key}: not an image file.")
+                try:
+                    append_failure_record(
+                        global_failed_csv_path,
+                        {
+                            "search_term": query,
+                            "file_title": title_key,
+                            "source_url": "",
+                            "reason": "no_image_extension",
+                            "detail": "",
                         },
                     )
                 except Exception:
