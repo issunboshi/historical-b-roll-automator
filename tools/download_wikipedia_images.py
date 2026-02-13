@@ -106,6 +106,13 @@ BLACKLIST_BASENAME_PATTERNS = [
     "map_marker",
     # Audio/media icons
     "speaker_icon",
+    # Navigation/portal/category icons
+    "symbol_portal",
+    "symbol_category",
+    "symbol_list",
+    "symbol_book",
+    "arrow_blue",
+    "portal-puzzle",
 ]
 
 
@@ -215,6 +222,16 @@ def get_content_images(session: requests.Session, pageid: int) -> List[str]:
     content = soup.select_one(".mw-parser-output")
     if not content:
         content = soup  # fallback to whole document if structure changes
+
+    # Remove non-content containers that inject UI icons (navboxes, sister
+    # project bars, portal links, message boxes, succession boxes, etc.)
+    # These are inside .mw-parser-output but aren't article content.
+    for sel in content.select(
+        ".navbox, .sister-bar, .noprint, .mbox-image-div, "
+        ".portal-bar, .succession-box, .sistersitebox, .side-box"
+    ):
+        sel.decompose()
+
     file_titles: List[str] = []
     seen = set()
 
