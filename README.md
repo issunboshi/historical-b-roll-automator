@@ -297,6 +297,10 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `-j, --parallel N` | Parallel download threads (default: 4) |
 | `--no-svg-to-png` | Disable SVG to PNG conversion |
 | `--min-priority N` | Skip entities below this priority |
+| `--prefer-recent` | Prioritize newer images first (auto-enabled for people entities) |
+| `--no-historical-priority` | Disable older-first reordering; keep source order |
+| `--era-start YEAR` | Start of era range for image ordering |
+| `--era-end YEAR` | End of era range for image ordering |
 | `-v, --verbose` | Show per-entity details |
 | `-i, --interactive` | Interactively retry failed downloads with alternative search terms |
 
@@ -491,17 +495,21 @@ output_dir/
   merged_entities.json           # Deduplicated entities
   montages.json                  # Montage/collage opportunities
   strategies_entities.json       # With search strategies, disambiguation, images
+  pre_download_entities.json     # Snapshot before download step mutates strategies_entities
   broll_timeline.xml             # FCP 7 XML for DaVinci Resolve
   broll_timeline.excluded.json   # Entities excluded by quality filter
   disambiguation_review.json     # Entities flagged for human review
+  disambiguation_overrides.json  # Manual entity→article overrides (if created)
   .broll_checkpoint.json         # Pipeline checkpoint state
   images/                        # Downloaded images organized by license
-    public_domain/
-    cc_by/
-    cc_by_sa/
-    other_cc/
-    restricted_nonfree/
-    unknown/
+    Entity_Name/
+      public_domain/
+        image.jpg
+        ATTRIBUTION.csv          # License metadata per image
+      cc_by/
+      ...
+      DOWNLOAD_SUMMARY.tsv       # All downloaded images with license info
+      FAILED_DOWNLOADS.csv       # Skipped images with skip reasons
 ```
 
 ### Importing to DaVinci Resolve
@@ -833,6 +841,16 @@ python broll.py pipeline --srt video.srt --from-step summarize
 
 Check `broll_timeline.excluded.json` for entities filtered by quality threshold.
 
+### Re-downloading images for specific entities
+
+The download step skips entities that already have images in `strategies_entities.json` or an existing output directory. To force re-download:
+
+1. Delete the entity's directory from `images/` (e.g. `rm -rf output_dir/images/Entity_Name`)
+2. Either clear `"images"` from the entity in `strategies_entities.json`, or restore `pre_download_entities.json` (the pre-download snapshot)
+3. Re-run: `python broll.py pipeline --srt video.srt --from-step download`
+
+Check `FAILED_DOWNLOADS.csv` inside each entity's image directory for why specific images were skipped.
+
 ### Review flagged entities
 
 Use `--interactive` to review uncertain disambiguations and retry failed downloads in real time:
@@ -868,6 +886,8 @@ python broll.py pipeline --srt video.srt --from-step disambiguate
 Design documents in `docs/plans/` (active plans in root, completed/abandoned in `archive/`):
 
 See [`docs/plans/README.md`](docs/plans/README.md) for full index.
+
+Key reference: [`docs/plans/image-selection-pipeline.md`](docs/plans/image-selection-pipeline.md) — comprehensive documentation of the image discovery, filtering, ordering, and license categorization pipeline.
 
 Project planning files in `.planning/`:
 - `PROJECT.md` — Project overview and requirements
