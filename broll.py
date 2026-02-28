@@ -401,6 +401,9 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if getattr(args, 'interactive', False):
         cmd.append("--interactive")
 
+    if getattr(args, 'output_dir', None):
+        cmd.extend(["--output-dir", str(args.output_dir)])
+
     try:
         run_step("Downloading images from Wikipedia", cmd)
         print(f"\nEntities map updated: {map_path.absolute()}")
