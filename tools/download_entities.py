@@ -221,9 +221,10 @@ def get_search_terms(entity_name: str, payload: Dict) -> List[str]:
     return terms
 
 
-def resolve_output_dir() -> Path:
-    # Reuse downloader's resolution order via env/config if available;
-    # otherwise default to current directory.
+def resolve_output_dir(cli_output: Optional[str] = None) -> Path:
+    # Resolution order: CLI > env > config > cwd
+    if cli_output:
+        return Path(cli_output).expanduser().resolve()
     env_out = os.environ.get("WIKI_IMG_OUTPUT_DIR", "").strip()
     if env_out:
         return Path(env_out).expanduser().resolve()
@@ -458,6 +459,8 @@ def download_entity(
                 search_term,
                 "--limit",
                 str(effective_images),
+                "--output",
+                str(out_dir),
                 "--user-agent",
                 user_agent,
                 "--png-width",
@@ -620,6 +623,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to write disambiguation review file")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Interactively retry failed downloads with alternative search terms")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Output directory for downloaded images. If omitted, uses ENV/CONFIG or current directory.")
     args = parser.parse_args(argv)
 
     # Setup logging based on verbose flag
@@ -669,7 +674,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("No entities in map.", file=sys.stderr)
         return 2
 
-    out_dir = resolve_output_dir()
+    out_dir = resolve_output_dir(getattr(args, 'output_dir', None))
     downloader = Path(__file__).resolve().parent / "download_wikipedia_images.py"
     if not downloader.exists():
         print("download_wikipedia_images.py not found.", file=sys.stderr)
