@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add `--retry-failed` flag to the download command that retries only entities with `download_status == "failed"`.
+**Goal:** Add `--retry-failed` flag to the download command that retries only entities with `download_status == "failed"` or `"no_images"`.
 
 **Architecture:** Flag on `download_entities.py` changes entity filter from "no images" to "download_status=failed", clears stale state, and passes `force=True` to `download_entity()` to bypass the directory-exists skip gate. `broll.py` forwards the flag via subprocess.
 
