@@ -1460,6 +1460,7 @@ Examples:
         help="Download images for entities",
     )
     p_download.add_argument("--map", required=True, help="Path to entities_map.json")
+    p_download.add_argument("--output-dir", "-o", help="Output directory for downloaded images")
     p_download.add_argument("--images-per-entity", type=int, help="Max images per entity")
     p_download.add_argument("--delay", type=float, help="Delay between requests (default: 0.1s)")
     p_download.add_argument("-j", "--parallel", type=int, default=4,
