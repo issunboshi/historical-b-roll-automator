@@ -317,6 +317,7 @@ def download_entity(
     disambiguation_model: str = "claude-sonnet-4-5-20250929",
     download_workers: int = 4,
     thumbnail_width: int = 0,
+    force: bool = False,
 ) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
     Download images for a single entity with disambiguation support.
@@ -420,7 +421,7 @@ def download_entity(
                 search_terms = [decision.chosen_article] + search_terms
 
     # If the entity output directory already exists, skip the download step
-    if entity_dir.exists():
+    if entity_dir.exists() and not force:
         safe_print(f"[{current_idx}/{total_entities}] Skipping: {entity_name} (already downloaded)")
         # Determine matched_term from existing directory
         # Since we can't know which term was used, assume it was the entity name
@@ -635,6 +636,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to write disambiguation review file")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Interactively retry failed downloads with alternative search terms")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Retry only entities with download_status='failed' from a previous run")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for downloaded images. If omitted, uses ENV/CONFIG or current directory.")
     args = parser.parse_args(argv)
@@ -705,15 +708,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                     max_time = max(max_time, time_secs)
         transcript_duration = max_time
 
-    # Filter to entities that need downloading (don't already have images)
-    need_download = [
-        (name, payload) for name, payload in entities.items()
-        if not payload.get("images")
-    ]
-
-    if not need_download:
-        print("All entities already have images. Nothing to download.")
-        return 0
+    # Filter to entities that need downloading
+    if getattr(args, 'retry_failed', False):
+        need_download = [
+            (name, payload) for name, payload in entities.items()
+            if payload.get("download_status") == "failed"
+        ]
+        if not need_download:
+            print("No entities with download_status='failed'. Nothing to retry.")
+            return 0
+        # Clear stale state so download + harvest work cleanly
+        for name, payload in need_download:
+            payload.pop("images", None)
+            payload.pop("download_status", None)
+        print(f"Retrying {len(need_download)} previously failed entities...")
+    else:
+        need_download = [
+            (name, payload) for name, payload in entities.items()
+            if not payload.get("images")
+        ]
+        if not need_download:
+            print("All entities already have images. Nothing to download.")
+            return 0
 
     # Create shared session for Wikipedia API calls (authenticated if token available)
     wiki_session = build_wiki_session(user_agent=f"B-Roll-Finder/1.0 ({args.user_agent})")
@@ -842,6 +858,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 era_year_range=era_year_range,
                 download_workers=args.download_workers,
                 thumbnail_width=getattr(args, 'thumbnail_width', 0),
+                force=getattr(args, 'retry_failed', False),
             )
             results[name] = (success, entity_dir, matched_term, disambiguation_result)
     else:
@@ -893,6 +910,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     era_year_range=era_year_range,
                     download_workers=args.download_workers,
                     thumbnail_width=getattr(args, 'thumbnail_width', 0),
+                    force=getattr(args, 'retry_failed', False),
                 )
                 futures[future] = entity_name
 
