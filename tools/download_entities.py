@@ -440,7 +440,7 @@ def download_entity(
         search_term_dir = out_dir / safe_folder_name(search_term)
 
         # Skip if this directory already exists (from previous run or earlier iteration)
-        if search_term_dir.exists():
+        if search_term_dir.exists() and not force:
             safe_print(f"[{current_idx}/{total_entities}]   Skipping: {search_term} (already exists)")
             # Check if it has images
             image_count = sum(1 for _ in search_term_dir.rglob("*.png")) + sum(1 for _ in search_term_dir.rglob("*.jpg"))
@@ -712,10 +712,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if getattr(args, 'retry_failed', False):
         need_download = [
             (name, payload) for name, payload in entities.items()
-            if payload.get("download_status") == "failed"
+            if payload.get("download_status") in ("failed", "no_images")
         ]
         if not need_download:
-            print("No entities with download_status='failed'. Nothing to retry.")
+            print("No failed entities to retry. Nothing to do.")
             return 0
         # Clear stale state so download + harvest work cleanly
         for name, payload in need_download:
