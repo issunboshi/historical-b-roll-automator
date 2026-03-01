@@ -39,6 +39,7 @@
 - `pre_download_entities.json` — snapshot of entities before the download step mutates `strategies_entities.json`
 - Two skip gates prevent re-downloading: (1) `payload.get("images")` filters entities already having images in JSON, (2) `entity_dir.exists()` skips entities with existing output directories
 - To re-download an entity: delete its directory from `images/` AND clear `"images"` from `strategies_entities.json` (or restore `pre_download_entities.json`)
+- `--retry-failed` flag selects entities with `download_status` of `"failed"` or `"no_images"`, clears stale state, and bypasses both skip gates (entity dir + search term dir)
 - Per-entity output files: `DOWNLOAD_SUMMARY.tsv` (downloaded images), `ATTRIBUTION.csv` (license metadata), `FAILED_DOWNLOADS.csv` (skipped images with reasons)
 
 ## Image Filtering (in `download_wikipedia_images.py`)

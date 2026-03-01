@@ -311,6 +311,7 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--era-end YEAR` | End of era range for image ordering |
 | `-v, --verbose` | Show per-entity details |
 | `-i, --interactive` | Interactively retry failed downloads with alternative search terms |
+| `--retry-failed` | Retry only entities that failed (`download_status=failed` or `no_images`) in a previous run |
 
 #### xml
 | Flag | Description |
