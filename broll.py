@@ -411,6 +411,9 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if thumbnail_width > 0:
         cmd.extend(["--thumbnail-width", str(thumbnail_width)])
 
+    if getattr(args, 'retry_failed', False):
+        cmd.append("--retry-failed")
+
     try:
         run_step("Downloading images from Wikipedia", cmd)
         print(f"\nEntities map updated: {map_path.absolute()}")
@@ -1472,6 +1475,8 @@ Examples:
                             help="Show per-entity skip messages")
     p_download.add_argument("-i", "--interactive", action="store_true",
                             help="Interactively retry failed downloads with alternative search terms")
+    p_download.add_argument("--retry-failed", action="store_true",
+                            help="Retry only entities with download_status='failed' from a previous run")
 
     # Enrich command
     p_enrich = subparsers.add_parser(
