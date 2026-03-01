@@ -5,6 +5,9 @@ min_gap_seconds: 1
 broll_track_count: 4
 broll_track_name_prefix: "B-roll"
 allow_non_pd: false
+parallel_downloads: 2
+download_workers: 2
+thumbnail_width: 2560
 llm:
   # Global default provider and model
   provider: openai
@@ -28,5 +31,5 @@ llm:
       model: claude-opus-4-6
     disambiguate:
       provider: anthropic
-      model: claude-sonnet-4-6
+      model: claude-sonnet-4-5
 

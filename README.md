@@ -144,10 +144,16 @@ python broll.py pipeline --srt video.srt [options]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-j, --parallel N` | 10 | Parallel download threads |
+| `-j, --parallel N` | 2 | Parallel entity download subprocesses |
+| `--download-workers N` | 2 | Parallel image download threads per entity |
+| `--thumbnail-width N` | 2560 | Download thumbnails at this pixel width (0 = full resolution) |
 | `--disambig-parallel N` | 10 | Parallel disambiguation workers |
 | `--extract-delay N` | 0.2 | Delay between LLM API calls (seconds) |
-| `--download-delay N` | 0.1 | Delay between Wikipedia requests (seconds) |
+| `--download-delay N` | 0.3 | Delay between Wikipedia download requests (seconds) |
+
+**Tuning note:** Total concurrent downloads = `--parallel` × `--download-workers` (default: 4). A thread-safe rate limiter enforces a minimum interval between requests within each entity subprocess, preventing 429 (rate limit) responses from Wikimedia. If downloads fail with 429 errors, lower `--parallel` to 1 or increase `--download-delay`. With an authenticated Wikipedia API token (5000 req/hr), `--parallel 4 --download-workers 3` is safe.
+
+**Thumbnail mode (default):** The pipeline requests thumbnails at `--thumbnail-width` pixels (default: 2560) via the Wikimedia `iiurlwidth` API parameter. Thumbnails are typically 10-20× smaller than originals, dramatically reducing download time and rate-limit pressure. Use `--thumbnail-width 0` for full-resolution originals.
 
 ### LLM & Processing
 
@@ -294,7 +300,9 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--output-dir, -o PATH` | Output directory for images |
 | `--images-per-entity N` | Max images per entity |
 | `--delay N` | Delay between requests (default: 0.1) |
-| `-j, --parallel N` | Parallel download threads (default: 4) |
+| `-j, --parallel N` | Parallel entity download threads (default: 4) |
+| `--download-workers N` | Parallel image downloads per entity (default: 2) |
+| `--thumbnail-width N` | Download thumbnails at this pixel width (0 = full resolution) |
 | `--no-svg-to-png` | Disable SVG to PNG conversion |
 | `--min-priority N` | Skip entities below this priority |
 | `--prefer-recent` | Prioritize newer images first (auto-enabled for people entities) |
@@ -764,8 +772,8 @@ python3 tools/download_wikipedia_images.py "SEARCH TERM" ["ANOTHER TERM" ...]
 ### Rate Limiting
 
 - `--delay SECONDS` — Politeness delay (default: 0.3)
-- `--max-retries N` — HTTP retries on 429/5xx (default: 3)
-- `--retry-backoff SECONDS` — Exponential backoff base (default: 0.5)
+- `--max-retries N` — HTTP retries on 429/5xx (default: 5)
+- `--retry-backoff SECONDS` — Exponential backoff base for 5xx errors (default: 0.5; 429s use a longer 2.0s base)
 
 All Wikipedia API sessions are authenticated when `WIKIPEDIA_API_ACCESS_TOKEN` is set, providing 5000 req/hr (vs 500 unauthenticated). This applies to the standalone downloader, disambiguation, and download-entities tools.
 

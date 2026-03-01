@@ -56,6 +56,15 @@
 - `inject` — manually inject images into an entity's image list in `entities_map.json`
 - `status` — show config, env vars, and tool availability
 
+## Rate Limiting (in `download_wikipedia_images.py`)
+- `MAX_RETRIES = 5` — HTTP retry attempts for 429/5xx
+- `RETRY_BACKOFF_S = 0.5` — exponential backoff base for 5xx errors
+- `_429_BACKOFF_S = 2.0` — exponential backoff base for 429 rate-limit responses (worst-case ~62s total wait)
+- `_RateLimiter` class — thread-safe minimum-interval enforcer using `threading.Lock` + `time.monotonic()`
+- Pipeline defaults: `--parallel 2` × `--download-workers 2` = 4 max concurrent downloads
+- `THUMBNAIL_WIDTH` global — when >0, requests `iiurlwidth` from Wikimedia API for smaller `thumburl` downloads
+- Pipeline default: `--thumbnail-width 2560` (thumbnails); standalone default: `0` (full resolution)
+
 ## Disambiguation
 - `disambiguation_overrides.json` — manual entity→Wikipedia article mappings (confidence 10)
 - `--interactive` flag pauses for human review of uncertain/failed entities

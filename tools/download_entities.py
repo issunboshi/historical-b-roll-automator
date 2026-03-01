@@ -315,6 +315,8 @@ def download_entity(
     session: Optional[requests.Session] = None,
     era_year_range: Optional[Tuple[int, int]] = None,
     disambiguation_model: str = "claude-sonnet-4-5-20250929",
+    download_workers: int = 4,
+    thumbnail_width: int = 0,
 ) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
     Download images for a single entity with disambiguation support.
@@ -483,6 +485,12 @@ def download_entity(
                 cmd.extend(["--era-start", str(era_year_range[0]),
                              "--era-end", str(era_year_range[1])])
 
+            # Pass parallel download workers for within-entity parallelism
+            cmd.extend(["--download-workers", str(download_workers)])
+
+            if thumbnail_width > 0:
+                cmd.extend(["--thumbnail-width", str(thumbnail_width)])
+
             # Capture output to avoid interleaved console output
             subprocess.run(
                 cmd,
@@ -606,9 +614,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--user-agent", type=str, default="b-roll-pipeline/0.1", help="HTTP User-Agent for downloader")
     parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion")
     parser.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
-    parser.add_argument("--delay", type=float, default=0.1, help="Politeness delay between requests (seconds)")
+    parser.add_argument("--delay", type=float, default=0.3, help="Politeness delay between requests (seconds)")
     parser.add_argument("-j", "--parallel", type=int, default=1,
                         help="Number of parallel downloads (recommended: 4)")
+    parser.add_argument("--download-workers", type=int, default=2,
+                        help="Parallel image download workers per entity (default: 2)")
+    parser.add_argument("--thumbnail-width", type=int, default=0,
+                        help="Request thumbnail at this pixel width (0 = full resolution, default: 0)")
     parser.add_argument("--no-strategies", action="store_true",
                         help="Disable search strategy iteration (use only entity name for backward compatibility)")
     parser.add_argument("--min-priority", type=float, default=0.5,
@@ -828,6 +840,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 video_topic=video_topic,
                 session=wiki_session,
                 era_year_range=era_year_range,
+                download_workers=args.download_workers,
+                thumbnail_width=getattr(args, 'thumbnail_width', 0),
             )
             results[name] = (success, entity_dir, matched_term, disambiguation_result)
     else:
@@ -877,6 +891,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     video_topic=video_topic,
                     session=wiki_session,
                     era_year_range=era_year_range,
+                    download_workers=args.download_workers,
+                    thumbnail_width=getattr(args, 'thumbnail_width', 0),
                 )
                 futures[future] = entity_name
 

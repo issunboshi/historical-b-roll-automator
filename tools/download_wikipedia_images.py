@@ -17,13 +17,15 @@ import argparse
 import os
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import unquote, urlparse, parse_qs
 
 import csv
-import random
 import random
 import requests
 from bs4 import BeautifulSoup
@@ -40,10 +42,12 @@ DEFAULT_USER_AGENT = "b-roll-finder/0.1 (Wikipedia image downloader; contact: lo
 
 # Rate limiting and retry settings (can be overridden via CLI)
 REQUEST_DELAY_S: float = 0.1
-MAX_RETRIES: int = 3
+MAX_RETRIES: int = 5
 RETRY_BACKOFF_S: float = 0.5
+_429_BACKOFF_S: float = 2.0  # longer backoff for 429 (rate limit) responses
 SVG_TO_PNG: bool = True
 SVG_PNG_WIDTH: int = 3000
+THUMBNAIL_WIDTH: int = 0  # 0 = full resolution; >0 requests thumburl at this px width
 _SVG_IMPORT_FAILED_WARNED: bool = False
 
 # Basename blacklist patterns to skip (case-insensitive, substring match)
@@ -114,6 +118,28 @@ BLACKLIST_BASENAME_PATTERNS = [
     "arrow_blue",
     "portal-puzzle",
 ]
+
+
+class _RateLimiter:
+    """Thread-safe rate limiter using monotonic clock.
+
+    Ensures a minimum interval between calls across all threads.
+    Self-adaptive: slow downloads don't add extra delay, fast downloads
+    get spaced out to respect the minimum interval.
+    """
+
+    def __init__(self, min_interval: float):
+        self._min_interval = min_interval
+        self._lock = threading.Lock()
+        self._last_call = 0.0  # monotonic timestamp
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.monotonic()
 
 
 def build_http_session(user_agent: str) -> requests.Session:
@@ -608,6 +634,110 @@ def write_attribution_sidecar(dest_path: Path, content: str) -> None:
         f.write(content)
 
 
+# ---------------------------------------------------------------------------
+# Parallel download infrastructure
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _DownloadTask:
+    """All data needed to download and post-process a single image."""
+    title_key: str
+    url: str
+    dest_path: Path
+    category_key: str
+    category_label: str
+    category_dir: Path
+    extmetadata: Dict
+    mime: Optional[str]
+    query: str
+    task_number: int  # 1-based position in download list
+    limit: int        # total download limit (for log messages)
+
+
+@dataclass
+class _DownloadResult:
+    """Outcome of a single download attempt."""
+    task: _DownloadTask
+    success: bool
+    error: Optional[str] = None
+    summary_line: Optional[str] = None
+    attribution_row: Optional[Dict[str, str]] = None
+    converted_png: Optional[Path] = None
+
+
+def _execute_download(
+    task: _DownloadTask,
+    session: requests.Session,
+    global_failed_csv_path: Path,
+    svg_to_png: bool,
+    svg_png_width: int,
+    rate_limiter: Optional[_RateLimiter] = None,
+) -> _DownloadResult:
+    """
+    Thread-safe worker: download one image, write sidecar, convert SVG.
+
+    Thread safety relies on:
+    - Each task writes to a unique dest_path (no file-level contention)
+    - requests.Session.get() is thread-safe (urllib3 connection pool)
+    - append_failure_record uses POSIX atomic appends for small writes
+    - rate_limiter enforces minimum interval between downloads across threads
+    """
+    t = task
+    try:
+        if rate_limiter:
+            rate_limiter.wait()
+        download_file(session, t.url, t.dest_path)
+    except Exception as e:
+        print(f"  [{t.task_number}/{t.limit}] Failed: {t.title_key}: {e}", file=sys.stderr)
+        try:
+            append_failure_record(
+                global_failed_csv_path,
+                {
+                    "search_term": t.query,
+                    "file_title": t.title_key,
+                    "source_url": t.url or "",
+                    "reason": "download_error",
+                    "detail": str(e),
+                },
+            )
+        except Exception:
+            pass
+        return _DownloadResult(task=t, success=False, error=str(e))
+
+    print(f"  [{t.task_number}/{t.limit}] Downloaded {t.title_key} -> {t.category_key}/{t.dest_path.name}")
+
+    # SVG conversion
+    converted_png = None
+    if svg_to_png and (t.mime == "image/svg+xml" or t.dest_path.suffix.lower() == ".svg"):
+        png_path = maybe_convert_svg_to_png(t.dest_path, svg_png_width)
+        if png_path:
+            print(f"    Converted SVG to PNG ({svg_png_width}px): {png_path.name}")
+            converted_png = png_path
+
+    # Attribution sidecar
+    attribution_row = None
+    if t.category_key != "public_domain":
+        try:
+            attr_text = build_attribution_text(t.title_key, t.url, t.extmetadata, t.category_key)
+            write_attribution_sidecar(t.dest_path, attr_text)
+            attribution_row = build_attribution_record(t.dest_path.name, t.title_key, t.url, t.extmetadata)
+        except Exception as e:
+            print(f"    Failed to write attribution for {t.dest_path.name}: {e}", file=sys.stderr)
+
+    # Summary line
+    license_short = get_meta_value(t.extmetadata, "LicenseShortName") or "Unknown"
+    license_url = get_meta_value(t.extmetadata, "LicenseUrl") or ""
+    summary_line = f"{t.dest_path.name}\t{t.category_key}\t{license_short}\t{license_url}\t{t.url}"
+
+    return _DownloadResult(
+        task=t,
+        success=True,
+        summary_line=summary_line,
+        attribution_row=attribution_row,
+        converted_png=converted_png,
+    )
+
+
 def build_attribution_record(
     filename: str,
     file_title: str,
@@ -721,6 +851,8 @@ def query_image_metadata(session: requests.Session, file_titles: List[str]) -> D
             "redirects": 1,
             "maxlag": 5,
         }
+        if THUMBNAIL_WIDTH > 0:
+            params["iiurlwidth"] = THUMBNAIL_WIDTH
         resp = http_get(session, WIKIPEDIA_API, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
@@ -744,6 +876,7 @@ def query_image_metadata(session: requests.Session, file_titles: List[str]) -> D
             entry = {
                 "title": title,
                 "url": info.get("url"),
+                "thumburl": info.get("thumburl"),
                 "mime": info.get("mime"),
                 "size": {"width": info.get("width"), "height": info.get("height")},
                 "extmetadata": info.get("extmetadata", {}),
@@ -955,13 +1088,16 @@ def http_get(
     """
     GET with retries, exponential backoff and jitter. Respects Retry-After.
     Retries on 429 and common 5xx errors.
+    Uses longer backoff (_429_BACKOFF_S) for 429 rate-limit responses.
     """
     last_exc: Optional[Exception] = None
+    last_status: Optional[int] = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(url, params=params, stream=stream, timeout=timeout)
             if resp.status_code < 400:
                 return resp
+            last_status = resp.status_code
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
                 sleep_s = None
@@ -971,11 +1107,13 @@ def http_get(
                     except Exception:
                         sleep_s = None
                 if sleep_s is None:
-                    sleep_s = RETRY_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+                    sleep_s = _429_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                print(f"  [retry {attempt}/{MAX_RETRIES}] 429 rate-limited, waiting {sleep_s:.1f}s: {url}", file=sys.stderr)
                 time.sleep(sleep_s)
                 continue
             if resp.status_code in (500, 502, 503, 504):
                 sleep_s = RETRY_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+                print(f"  [retry {attempt}/{MAX_RETRIES}] HTTP {resp.status_code}, waiting {sleep_s:.1f}s: {url}", file=sys.stderr)
                 time.sleep(sleep_s)
                 continue
             resp.raise_for_status()
@@ -983,10 +1121,11 @@ def http_get(
         except requests.RequestException as e:
             last_exc = e
             sleep_s = RETRY_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+            print(f"  [retry {attempt}/{MAX_RETRIES}] {type(e).__name__}, waiting {sleep_s:.1f}s: {url}", file=sys.stderr)
             time.sleep(sleep_s)
     if last_exc:
         raise last_exc
-    raise RuntimeError("http_get exhausted retries without exception")
+    raise RuntimeError(f"HTTP {last_status} after {MAX_RETRIES} retries: {url}")
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Download top images from a Wikipedia page grouped by license.")
@@ -995,7 +1134,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=str, default=None, help="Output directory. If omitted, use ENV/CONFIG or current directory.")
     parser.add_argument("--user-agent", type=str, default=DEFAULT_USER_AGENT, help="Custom HTTP User-Agent")
     parser.add_argument("--delay", type=float, default=0.3, help="Politeness delay between requests (seconds). Default: 0.3")
-    parser.add_argument("--max-retries", type=int, default=3, help="Max HTTP retries on 429/5xx. Default: 3")
+    parser.add_argument("--max-retries", type=int, default=5, help="Max HTTP retries on 429/5xx. Default: 5")
     parser.add_argument("--retry-backoff", type=float, default=0.5, help="Base backoff seconds for retries. Default: 0.5")
     parser.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion (enabled by default).")
     parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion (default: 3000).")
@@ -1004,18 +1143,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--search-limit", type=int, default=3, help="Number of Wikipedia search results to try per query. Default: 3")
     parser.add_argument("--era-start", type=int, help="Start year for era-aware image prioritization.")
     parser.add_argument("--era-end", type=int, help="End year for era-aware image prioritization.")
+    parser.add_argument("--download-workers", type=int, default=4,
+                        help="Parallel image download workers per entity (default: 4)")
+    parser.add_argument("--thumbnail-width", type=int, default=0,
+                        help="Request thumbnail at this pixel width (0 = full resolution, default: 0)")
     args = parser.parse_args(argv)
 
     # Sanitize queries: allow users to separate with commas in shell inputs
     args.queries = [q.strip().strip(",") for q in args.queries if q.strip().strip(",")]
 
     # Apply runtime tunables
-    global REQUEST_DELAY_S, MAX_RETRIES, RETRY_BACKOFF_S, SVG_TO_PNG, SVG_PNG_WIDTH
+    global REQUEST_DELAY_S, MAX_RETRIES, RETRY_BACKOFF_S, SVG_TO_PNG, SVG_PNG_WIDTH, THUMBNAIL_WIDTH
     REQUEST_DELAY_S = max(0.0, float(args.delay))
     MAX_RETRIES = max(1, int(args.max_retries))
     RETRY_BACKOFF_S = max(0.0, float(args.retry_backoff))
     SVG_TO_PNG = not bool(args.no_svg_to_png)
     SVG_PNG_WIDTH = max(1, int(args.png_width))
+    THUMBNAIL_WIDTH = max(0, int(args.thumbnail_width))
+
+    # Thread-safe rate limiter ensures minimum interval between downloads
+    rate_limiter = _RateLimiter(min_interval=max(0.2, REQUEST_DELAY_S))
 
     output_dir = resolve_output_dir(args.output)
     ensure_directory(output_dir)
@@ -1023,6 +1170,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     global_failed_csv_path = output_dir / "FAILED_DOWNLOADS.csv"
 
     session = build_http_session(args.user_agent)
+
+    if THUMBNAIL_WIDTH > 0:
+        print(f"Thumbnail mode: requesting {THUMBNAIL_WIDTH}px thumbnails")
 
     any_success = False
     for term_index, query in enumerate(args.queries, start=1):
@@ -1109,10 +1259,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         attribution_rows_by_cat: Dict[str, List[Dict[str, str]]] = {}
         category_dirs: Dict[str, Path] = {}
 
-        # Download files grouped by license category until limit reached
-        downloaded_count = 0
+        # ---------------------------------------------------------------
+        # Phase 1: Sequential filtering (fast, no I/O)
+        # Walk ordered_titles, apply all validation checks, build a
+        # list of _DownloadTask objects capped at args.limit.
+        # ---------------------------------------------------------------
+        download_tasks: List[_DownloadTask] = []
         for idx, title_key in enumerate(ordered_titles, start=1):
-            if downloaded_count >= args.limit:
+            if len(download_tasks) >= args.limit:
                 break
             # Skip blacklisted basenames
             bl_match = match_blacklist_pattern(title_key)
@@ -1132,8 +1286,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 except Exception:
                     pass
                 continue
-            # Skip titles without a recognized image extension (e.g. red links
-            # to articles that were misidentified as File: pages)
+            # Skip titles without a recognized image extension
             if not has_image_extension(title_key):
                 print(f"[{idx}/{len(all_images)}] Skipping {title_key}: not an image file.")
                 try:
@@ -1168,6 +1321,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     pass
                 continue
             url = meta.get("url")
+            # Prefer thumbnail URL when thumbnail mode is active
+            if THUMBNAIL_WIDTH > 0:
+                url = meta.get("thumburl") or url
             if not url:
                 print(f"[{idx}/{len(all_images)}] Skipping {title_key}: no URL.")
                 try:
@@ -1187,7 +1343,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             # Enforce images only by MIME and by title heuristic
             mime = meta.get("mime")
             if not is_image_mime(mime) or is_probably_non_image_title(title_key):
-                # Log skip reason for transparency
                 try:
                     if not is_image_mime(mime):
                         append_failure_record(
@@ -1215,7 +1370,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     pass
                 continue
             extmetadata = meta.get("extmetadata", {})
-            # Skip symbolic SVGs (flags, coats of arms, signatures); continue scanning for alternatives
+            # Skip symbolic SVGs (flags, coats of arms, signatures)
             if is_symbolic_svg(title_key, mime, extmetadata):
                 try:
                     append_failure_record(
@@ -1238,7 +1393,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             dest_path = category_dir / filename
             # If destination already exists, skip download
             if dest_path.exists():
-                print(f"[{downloaded_count+1}/{args.limit}] Skipping {title_key}: already exists at {category_key}/{dest_path.name}")
+                print(f"[{len(download_tasks)+1}/{args.limit}] Skipping {title_key}: already exists at {category_key}/{dest_path.name}")
                 try:
                     append_failure_record(
                         global_failed_csv_path,
@@ -1254,50 +1409,59 @@ def main(argv: Optional[List[str]] = None) -> int:
                     pass
                 continue
 
-            print(f"[{downloaded_count+1}/{args.limit}] Downloading {title_key} -> {category_key}/{dest_path.name}")
-            try:
-                download_file(session, url, dest_path)
-            except Exception as e:
-                print(f"  Failed: {e}", file=sys.stderr)
-                # Record failure
-                try:
-                    append_failure_record(
-                        global_failed_csv_path,
-                        {
-                            "search_term": query,
-                            "file_title": title_key,
-                            "source_url": url or "",
-                            "reason": "download_error",
-                            "detail": str(e),
-                        },
-                    )
-                except Exception:
-                    pass
-                continue
-            # Count and track successful download
-            counts_by_cat[category_key] = counts_by_cat.get(category_key, 0) + 1
-            category_dirs.setdefault(category_key, category_dir)
-            # Optional: convert SVG to PNG
-            if SVG_TO_PNG and (mime == "image/svg+xml" or dest_path.suffix.lower() == ".svg"):
-                png_path = maybe_convert_svg_to_png(dest_path, SVG_PNG_WIDTH)
-                if png_path:
-                    print(f"  Converted SVG to PNG ({SVG_PNG_WIDTH}px): {png_path.name}")
-            # For non-public-domain, write an attribution sidecar
-            if category_key != "public_domain":
-                try:
-                    attr_text = build_attribution_text(title_key, url, extmetadata, category_key)
-                    write_attribution_sidecar(dest_path, attr_text)
-                    # Also collect CSV row for this category
-                    row = build_attribution_record(dest_path.name, title_key, url, extmetadata)
-                    attribution_rows_by_cat.setdefault(category_key, []).append(row)
-                except Exception as e:
-                    print(f"  Failed to write attribution for {dest_path.name}: {e}", file=sys.stderr)
+            download_tasks.append(_DownloadTask(
+                title_key=title_key,
+                url=url,
+                dest_path=dest_path,
+                category_key=category_key,
+                category_label=category_label,
+                category_dir=category_dir,
+                extmetadata=extmetadata,
+                mime=mime,
+                query=query,
+                task_number=len(download_tasks) + 1,
+                limit=args.limit,
+            ))
 
-            # Append a summary line
-            license_short = get_meta_value(extmetadata, "LicenseShortName") or "Unknown"
-            license_url = get_meta_value(extmetadata, "LicenseUrl") or ""
-            summary_lines.append(f"{dest_path.name}\t{category_key}\t{license_short}\t{license_url}\t{url}")
-            downloaded_count += 1
+        # ---------------------------------------------------------------
+        # Phase 2: Parallel download + post-processing (I/O-bound)
+        # ---------------------------------------------------------------
+        download_workers = max(1, getattr(args, "download_workers", 4))
+        if download_tasks:
+            print(f"Downloading {len(download_tasks)} images ({download_workers} workers)...")
+            results: List[_DownloadResult] = []
+            with ThreadPoolExecutor(max_workers=download_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _execute_download,
+                        task=task,
+                        session=session,
+                        global_failed_csv_path=global_failed_csv_path,
+                        svg_to_png=SVG_TO_PNG,
+                        svg_png_width=SVG_PNG_WIDTH,
+                        rate_limiter=rate_limiter,
+                    ): task
+                    for task in download_tasks
+                }
+                for future in as_completed(futures):
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        task = futures[future]
+                        print(f"  Unexpected error for {task.title_key}: {e}", file=sys.stderr)
+
+            # Aggregate results in task_number order (preserves priority ordering)
+            results.sort(key=lambda r: r.task.task_number)
+            for r in results:
+                if not r.success:
+                    continue
+                t = r.task
+                counts_by_cat[t.category_key] = counts_by_cat.get(t.category_key, 0) + 1
+                category_dirs.setdefault(t.category_key, t.category_dir)
+                if r.summary_line:
+                    summary_lines.append(r.summary_line)
+                if r.attribution_row:
+                    attribution_rows_by_cat.setdefault(t.category_key, []).append(r.attribution_row)
 
         # Write summary file
         summary_path = search_root / "DOWNLOAD_SUMMARY.tsv"
