@@ -315,6 +315,9 @@ def download_entity(
     session: Optional[requests.Session] = None,
     era_year_range: Optional[Tuple[int, int]] = None,
     disambiguation_model: str = "claude-sonnet-4-5-20250929",
+    download_workers: int = 4,
+    thumbnail_width: int = 0,
+    force: bool = False,
 ) -> Tuple[str, bool, Path, Optional[str], Optional[dict]]:
     """
     Download images for a single entity with disambiguation support.
@@ -418,7 +421,7 @@ def download_entity(
                 search_terms = [decision.chosen_article] + search_terms
 
     # If the entity output directory already exists, skip the download step
-    if entity_dir.exists():
+    if entity_dir.exists() and not force:
         safe_print(f"[{current_idx}/{total_entities}] Skipping: {entity_name} (already downloaded)")
         # Determine matched_term from existing directory
         # Since we can't know which term was used, assume it was the entity name
@@ -437,7 +440,7 @@ def download_entity(
         search_term_dir = out_dir / safe_folder_name(search_term)
 
         # Skip if this directory already exists (from previous run or earlier iteration)
-        if search_term_dir.exists():
+        if search_term_dir.exists() and not force:
             safe_print(f"[{current_idx}/{total_entities}]   Skipping: {search_term} (already exists)")
             # Check if it has images
             image_count = sum(1 for _ in search_term_dir.rglob("*.png")) + sum(1 for _ in search_term_dir.rglob("*.jpg"))
@@ -482,6 +485,12 @@ def download_entity(
             if era_year_range:
                 cmd.extend(["--era-start", str(era_year_range[0]),
                              "--era-end", str(era_year_range[1])])
+
+            # Pass parallel download workers for within-entity parallelism
+            cmd.extend(["--download-workers", str(download_workers)])
+
+            if thumbnail_width > 0:
+                cmd.extend(["--thumbnail-width", str(thumbnail_width)])
 
             # Capture output to avoid interleaved console output
             subprocess.run(
@@ -606,9 +615,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--user-agent", type=str, default="b-roll-pipeline/0.1", help="HTTP User-Agent for downloader")
     parser.add_argument("--png-width", type=int, default=3000, help="PNG width for SVG conversion")
     parser.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
-    parser.add_argument("--delay", type=float, default=0.1, help="Politeness delay between requests (seconds)")
+    parser.add_argument("--delay", type=float, default=0.3, help="Politeness delay between requests (seconds)")
     parser.add_argument("-j", "--parallel", type=int, default=1,
                         help="Number of parallel downloads (recommended: 4)")
+    parser.add_argument("--download-workers", type=int, default=2,
+                        help="Parallel image download workers per entity (default: 2)")
+    parser.add_argument("--thumbnail-width", type=int, default=0,
+                        help="Request thumbnail at this pixel width (0 = full resolution, default: 0)")
     parser.add_argument("--no-strategies", action="store_true",
                         help="Disable search strategy iteration (use only entity name for backward compatibility)")
     parser.add_argument("--min-priority", type=float, default=0.5,
@@ -623,6 +636,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Path to write disambiguation review file")
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Interactively retry failed downloads with alternative search terms")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Retry only entities with download_status='failed' from a previous run")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for downloaded images. If omitted, uses ENV/CONFIG or current directory.")
     args = parser.parse_args(argv)
@@ -693,15 +708,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                     max_time = max(max_time, time_secs)
         transcript_duration = max_time
 
-    # Filter to entities that need downloading (don't already have images)
-    need_download = [
-        (name, payload) for name, payload in entities.items()
-        if not payload.get("images")
-    ]
-
-    if not need_download:
-        print("All entities already have images. Nothing to download.")
-        return 0
+    # Filter to entities that need downloading
+    if getattr(args, 'retry_failed', False):
+        need_download = [
+            (name, payload) for name, payload in entities.items()
+            if payload.get("download_status") in ("failed", "no_images")
+        ]
+        if not need_download:
+            print("No failed entities to retry. Nothing to do.")
+            return 0
+        # Clear stale state so download + harvest work cleanly
+        for name, payload in need_download:
+            payload.pop("images", None)
+            payload.pop("download_status", None)
+        print(f"Retrying {len(need_download)} previously failed entities...")
+    else:
+        need_download = [
+            (name, payload) for name, payload in entities.items()
+            if not payload.get("images")
+        ]
+        if not need_download:
+            print("All entities already have images. Nothing to download.")
+            return 0
 
     # Create shared session for Wikipedia API calls (authenticated if token available)
     wiki_session = build_wiki_session(user_agent=f"B-Roll-Finder/1.0 ({args.user_agent})")
@@ -828,6 +856,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 video_topic=video_topic,
                 session=wiki_session,
                 era_year_range=era_year_range,
+                download_workers=args.download_workers,
+                thumbnail_width=getattr(args, 'thumbnail_width', 0),
+                force=getattr(args, 'retry_failed', False),
             )
             results[name] = (success, entity_dir, matched_term, disambiguation_result)
     else:
@@ -877,6 +908,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     video_topic=video_topic,
                     session=wiki_session,
                     era_year_range=era_year_range,
+                    download_workers=args.download_workers,
+                    thumbnail_width=getattr(args, 'thumbnail_width', 0),
+                    force=getattr(args, 'retry_failed', False),
                 )
                 futures[future] = entity_name
 

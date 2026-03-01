@@ -39,6 +39,7 @@
 - `pre_download_entities.json` — snapshot of entities before the download step mutates `strategies_entities.json`
 - Two skip gates prevent re-downloading: (1) `payload.get("images")` filters entities already having images in JSON, (2) `entity_dir.exists()` skips entities with existing output directories
 - To re-download an entity: delete its directory from `images/` AND clear `"images"` from `strategies_entities.json` (or restore `pre_download_entities.json`)
+- `--retry-failed` flag selects entities with `download_status` of `"failed"` or `"no_images"`, clears stale state, and bypasses both skip gates (entity dir + search term dir)
 - Per-entity output files: `DOWNLOAD_SUMMARY.tsv` (downloaded images), `ATTRIBUTION.csv` (license metadata), `FAILED_DOWNLOADS.csv` (skipped images with reasons)
 
 ## Image Filtering (in `download_wikipedia_images.py`)
@@ -55,6 +56,15 @@
 - `extract`, `extract-visuals`, `enrich`, `summarize`, `merge-entities`, `montages`, `strategies`, `disambiguate`, `download`, `markers`, `xml` — individual steps
 - `inject` — manually inject images into an entity's image list in `entities_map.json`
 - `status` — show config, env vars, and tool availability
+
+## Rate Limiting (in `download_wikipedia_images.py`)
+- `MAX_RETRIES = 5` — HTTP retry attempts for 429/5xx
+- `RETRY_BACKOFF_S = 0.5` — exponential backoff base for 5xx errors
+- `_429_BACKOFF_S = 2.0` — exponential backoff base for 429 rate-limit responses (worst-case ~62s total wait)
+- `_RateLimiter` class — thread-safe minimum-interval enforcer using `threading.Lock` + `time.monotonic()`
+- Pipeline defaults: `--parallel 2` × `--download-workers 2` = 4 max concurrent downloads
+- `THUMBNAIL_WIDTH` global — when >0, requests `iiurlwidth` from Wikimedia API for smaller `thumburl` downloads
+- Pipeline default: `--thumbnail-width 2560` (thumbnails); standalone default: `0` (full resolution)
 
 ## Disambiguation
 - `disambiguation_overrides.json` — manual entity→Wikipedia article mappings (confidence 10)

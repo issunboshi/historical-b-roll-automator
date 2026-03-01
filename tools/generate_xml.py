@@ -33,7 +33,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
@@ -725,12 +725,26 @@ After generating the XML:
             if cat == 'public_domain' or not fn or fn in seen_filenames:
                 continue
             seen_filenames.add(fn)
-            entity = p.get('entity', '')
-            license_short = meta.get('license_short', cat)
             suggested = meta.get('suggested_attribution', '')
-            attribution_lines.append(
-                f"Entity: {entity} | File: {fn} | License: {license_short} | {suggested}"
-            )
+            source_url = meta.get('source_url', '')
+            # Derive the Wikimedia Commons file page URL from the upload URL
+            commons_url = ''
+            if source_url:
+                url_filename = unquote(urlparse(source_url).path.split('/')[-1])
+                commons_url = f"https://commons.wikimedia.org/wiki/File:{quote(url_filename, safe='')}"
+            if suggested:
+                line = f"- {suggested}"
+            else:
+                title = meta.get('title', fn)
+                author = meta.get('author', '')
+                license_short = meta.get('license_short', cat)
+                if author:
+                    line = f'- "{title}" by {author} is licensed under {license_short} via Wikimedia Commons.'
+                else:
+                    line = f'- "{title}" is licensed under {license_short} via Wikimedia Commons.'
+            if commons_url:
+                line += f" {commons_url}"
+            attribution_lines.append(line)
 
         if attribution_lines:
             attrib_path = output_path.with_suffix('.attribution.txt')

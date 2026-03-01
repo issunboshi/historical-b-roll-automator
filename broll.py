@@ -404,6 +404,16 @@ def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if getattr(args, 'output_dir', None):
         cmd.extend(["--output-dir", str(args.output_dir)])
 
+    download_workers = getattr(args, 'download_workers', 4)
+    cmd.extend(["--download-workers", str(download_workers)])
+
+    thumbnail_width = getattr(args, 'thumbnail_width', 0)
+    if thumbnail_width > 0:
+        cmd.extend(["--thumbnail-width", str(thumbnail_width)])
+
+    if getattr(args, 'retry_failed', False):
+        cmd.append("--retry-failed")
+
     try:
         run_step("Downloading images from Wikipedia", cmd)
         print(f"\nEntities map updated: {map_path.absolute()}")
@@ -1063,6 +1073,8 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             verbose=getattr(args, 'verbose', False),
             output_dir=str(output_dir),  # Pass output directory to download step
             interactive=getattr(args, 'interactive', False),
+            download_workers=getattr(args, 'download_workers', 4),
+            thumbnail_width=getattr(args, 'thumbnail_width', 2560),
         )
 
         result = cmd_download(download_args, config)
@@ -1362,12 +1374,16 @@ Examples:
     p_pipeline.add_argument("--allow-non-pd", action="store_true", help="Include non-public-domain images")
     p_pipeline.add_argument("--timeline-name", help="Name for the timeline")
     p_pipeline.add_argument("--extract-delay", type=float, default=0.2, help="Delay between LLM calls")
-    p_pipeline.add_argument("--download-delay", type=float, default=0.1, help="Delay between download requests")
-    p_pipeline.add_argument("-j", "--parallel", type=int, default=10,
-                            help="Number of parallel downloads (default: 10)")
+    p_pipeline.add_argument("--download-delay", type=float, default=0.3, help="Delay between download requests")
+    p_pipeline.add_argument("-j", "--parallel", type=int, default=2,
+                            help="Number of parallel downloads (default: 2)")
     p_pipeline.add_argument("--disambig-parallel", type=int, default=10,
                             help="Number of parallel disambiguation workers (default: 10)")
     p_pipeline.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
+    p_pipeline.add_argument("--download-workers", type=int, default=2,
+                            help="Parallel image download workers per entity (default: 2)")
+    p_pipeline.add_argument("--thumbnail-width", type=int, default=2560,
+                            help="Download thumbnails at this pixel width (0 = full resolution, default: 2560)")
     p_pipeline.add_argument("--batch-size", type=int, help="Entities per LLM call (5-10)")
     p_pipeline.add_argument("--cache-dir", help="Wikipedia cache directory")
     p_pipeline.add_argument("--min-priority", type=float,
@@ -1444,17 +1460,24 @@ Examples:
         help="Download images for entities",
     )
     p_download.add_argument("--map", required=True, help="Path to entities_map.json")
+    p_download.add_argument("--output-dir", "-o", help="Output directory for downloaded images")
     p_download.add_argument("--images-per-entity", type=int, help="Max images per entity")
     p_download.add_argument("--delay", type=float, help="Delay between requests (default: 0.1s)")
     p_download.add_argument("-j", "--parallel", type=int, default=4,
                             help="Number of parallel downloads (default: 4)")
     p_download.add_argument("--no-svg-to-png", action="store_true", help="Disable SVG to PNG conversion")
+    p_download.add_argument("--download-workers", type=int, default=4,
+                            help="Parallel image download workers per entity (default: 4)")
+    p_download.add_argument("--thumbnail-width", type=int, default=0,
+                            help="Download thumbnails at this pixel width (0 = full resolution, default: 0)")
     p_download.add_argument("--min-priority", type=float,
                             help="Minimum priority threshold for entity filtering (0.0 disables, default: 0.5)")
     p_download.add_argument("-v", "--verbose", action="store_true",
                             help="Show per-entity skip messages")
     p_download.add_argument("-i", "--interactive", action="store_true",
                             help="Interactively retry failed downloads with alternative search terms")
+    p_download.add_argument("--retry-failed", action="store_true",
+                            help="Retry only entities with download_status='failed' from a previous run")
 
     # Enrich command
     p_enrich = subparsers.add_parser(
