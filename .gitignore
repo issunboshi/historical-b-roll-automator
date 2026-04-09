@@ -82,6 +82,11 @@ venv.bak/
 # macOS
 .DS_Store
 
+# Internal dev tooling
+.planning/
+.serena/
+.claude/
+
 # Project output files
 output/
 /.wikipedia_image_downloader.ini
