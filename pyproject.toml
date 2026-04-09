@@ -5,7 +5,7 @@ description = "Extract entities from transcripts and download Wikipedia images f
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "your@email.com" }
+    { name = "Cliff Williams" }
 ]
 requires-python = ">=3.10"
 keywords = ["video", "b-roll", "wikipedia", "davinci-resolve", "transcript", "srt"]
@@ -63,10 +63,10 @@ all = [
 broll = "broll:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/b-roll-finder-app"
-Documentation = "https://github.com/yourusername/b-roll-finder-app#readme"
-Repository = "https://github.com/yourusername/b-roll-finder-app"
-Issues = "https://github.com/yourusername/b-roll-finder-app/issues"
+Homepage = "https://github.com/issunboshi/davinci-b-roll-automater"
+Documentation = "https://github.com/issunboshi/davinci-b-roll-automater#readme"
+Repository = "https://github.com/issunboshi/davinci-b-roll-automater"
+Issues = "https://github.com/issunboshi/davinci-b-roll-automater/issues"
 
 [build-system]
 requires = ["hatchling"]
