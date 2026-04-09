@@ -63,10 +63,10 @@ all = [
 broll = "broll:main"
 
 [project.urls]
-Homepage = "https://github.com/issunboshi/davinci-b-roll-automater"
-Documentation = "https://github.com/issunboshi/davinci-b-roll-automater#readme"
-Repository = "https://github.com/issunboshi/davinci-b-roll-automater"
-Issues = "https://github.com/issunboshi/davinci-b-roll-automater/issues"
+Homepage = "https://github.com/issunboshi/historical-b-roll-automator"
+Documentation = "https://github.com/issunboshi/historical-b-roll-automator#readme"
+Repository = "https://github.com/issunboshi/historical-b-roll-automator"
+Issues = "https://github.com/issunboshi/historical-b-roll-automator/issues"
 
 [build-system]
 requires = ["hatchling"]
