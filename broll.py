@@ -370,13 +370,18 @@ def cmd_extract(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
 def cmd_download(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Run image download for entities."""
+    if not getattr(args, 'output_dir', None):
+        print("Error: --output-dir is required for the download subcommand.", file=sys.stderr)
+        print("  Usage: broll.py download --map entities.json --output-dir ./images", file=sys.stderr)
+        return 1
+
     script = resolve_script_path("download_entities.py")
-    
+
     map_path = Path(args.map)
     if not map_path.exists():
         print(f"Error: entities_map not found: {map_path}", file=sys.stderr)
         return 1
-    
+
     images_per_entity = args.images_per_entity or config.get("images_per_entity", 3)
     parallel = getattr(args, 'parallel', None) or config.get("parallel_downloads", 4)
     
