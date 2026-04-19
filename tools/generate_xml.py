@@ -453,7 +453,8 @@ def fill_gap_hybrid(gap_start_frame: int,
                     duration_frames: int,
                     gap_frames: int,
                     stretch_threshold_frames: int,
-                    fps: float) -> tuple:
+                    fps: float,
+                    allow_recycle: bool = True) -> tuple:
     """Decide how to fill one gap on one track.
 
     This is the core coverage strategy. Called once per gap, per track.
@@ -503,15 +504,19 @@ def fill_gap_hybrid(gap_start_frame: int,
         * If image_pool is empty, return ([], pool_cursor) as a no-op.
     """
     gap_length = gap_end_frame - gap_start_frame
-    if gap_length <= 0 or not image_pool:
+    if gap_length <= 0:
         return [], pool_cursor
 
     # Short gap with something to stretch: extend prev clip up to next start.
+    # Stretching works even when recycling is disabled (it needs no images).
     if gap_length < stretch_threshold_frames and prev_placement is not None:
         prev_placement['duration_frames'] = max(
             prev_placement['duration_frames'],
             gap_end_frame - gap_frames - prev_placement['frame'],
         )
+        return [], pool_cursor
+
+    if not allow_recycle or not image_pool:
         return [], pool_cursor
 
     # Long gap (or leading gap with no prev to stretch): emit fillers.
@@ -542,13 +547,20 @@ def run_coverage_pass(placements: list,
                       duration_frames: int,
                       gap_frames: int,
                       stretch_threshold_frames: int,
-                      fps: float) -> list:
+                      fps: float,
+                      allow_recycle: bool = True) -> list:
     """Walk each track, find gaps, and call fill_gap_hybrid on each.
 
     Returns the full placement list (original + new fillers). Mutates
-    existing placements when the strategy chooses to stretch.
+    existing placements when the strategy chooses to stretch. When
+    allow_recycle is False, only stretch runs (no new filler clips).
     """
-    if not image_pool or total_frames <= 0:
+    if total_frames <= 0:
+        return placements
+    if not image_pool and not allow_recycle:
+        # Stretch-only mode still needs a walk to extend prev clips.
+        pass
+    elif not image_pool:
         return placements
 
     # Group placements by track, sorted by frame
@@ -580,6 +592,7 @@ def run_coverage_pass(placements: list,
                 gap_start, gap_end, prev,
                 image_pool, pool_cursor,
                 duration_frames, gap_frames, stretch_threshold_frames, fps,
+                allow_recycle=allow_recycle,
             )
             for f in fillers:
                 f['track'] = track_idx
@@ -638,8 +651,26 @@ After generating the XML:
     parser.add_argument('--stretch-threshold', type=float, default=5.0,
                         help='Gaps shorter than this (seconds) are stretched; '
                              'longer gaps get filler clips (default: 5.0)')
+    parser.add_argument('--candidates', default='1',
+                        help='Images per occurrence stacked on consecutive tracks. '
+                             'Integer >= 1 or "all" / "0" for every available image '
+                             '(default: 1 = current behaviour).')
 
     args = parser.parse_args()
+
+    # Parse --candidates (int or "all"/"0" sentinel). Internal representation:
+    # integer N for fixed stack, or 0 for "all candidates per entity".
+    raw = str(args.candidates).strip().lower()
+    if raw in ('all', '0'):
+        args.candidates = 0
+    else:
+        try:
+            args.candidates = max(1, int(raw))
+        except ValueError:
+            print(f"ERROR: --candidates must be an integer or 'all' (got '{raw}')",
+                  file=sys.stderr)
+            sys.exit(1)
+    tracks_user_set = '--tracks' in sys.argv or '-t' in sys.argv
     
     # Read JSON
     input_path = Path(args.input)
@@ -772,25 +803,45 @@ After generating the XML:
                         'image_meta': img,
                     })
             else:
-                # Standard single-image clip
-                img = filtered_images[idx % len(filtered_images)]
-                img_path = img.get('path', '')
+                # Candidate stacking: N=1 (default) emits one image; N>=2 or
+                # N="all" (parsed as 0) emits one clip per candidate on
+                # consecutive tracks at the same frame.
+                if args.candidates == 0:
+                    stack_size = len(filtered_images)
+                elif args.candidates >= 2:
+                    stack_size = min(args.candidates, len(filtered_images))
+                else:
+                    stack_size = 1
 
-                if not img_path or not os.path.exists(img_path):
-                    print(f"WARNING: Image not found: {img_path}", file=sys.stderr)
-                    continue
+                if stack_size == 1:
+                    # Legacy path — preserves rotation across occurrences.
+                    stack_imgs = [filtered_images[idx % len(filtered_images)]]
+                else:
+                    stack_imgs = filtered_images[:stack_size]
 
-                clips.append({
-                    'frame': frame,
-                    'seconds': seconds,
-                    'path': os.path.abspath(img_path),
-                    'name': f"{entity_name} - {img.get('filename', os.path.basename(img_path))}",
-                    'entity': entity_name,
-                    'occurrence_index': idx,
-                    'image_index': idx % len(filtered_images),
-                    'total_images': len(filtered_images),
-                    'image_meta': img,
-                })
+                stack_group = (
+                    f"{entity_name}@{frame}@{idx}" if stack_size > 1 else None
+                )
+                for offset, img in enumerate(stack_imgs):
+                    img_path = img.get('path', '')
+                    if not img_path or not os.path.exists(img_path):
+                        print(f"WARNING: Image not found: {img_path}", file=sys.stderr)
+                        continue
+
+                    clips.append({
+                        'frame': frame,
+                        'seconds': seconds,
+                        'path': os.path.abspath(img_path),
+                        'name': f"{entity_name} - {img.get('filename', os.path.basename(img_path))}",
+                        'entity': entity_name,
+                        'occurrence_index': idx,
+                        'image_index': offset if stack_size > 1 else idx % len(filtered_images),
+                        'total_images': len(filtered_images),
+                        'image_meta': img,
+                        'stack_group': stack_group,
+                        'stack_offset': offset,
+                        'stack_size': stack_size,
+                    })
     
     if not clips:
         print("ERROR: No valid clips to place", file=sys.stderr)
@@ -804,62 +855,101 @@ After generating the XML:
     # Assign tracks (stack overlapping clips on different tracks)
     duration_frames = seconds_to_frames(args.duration, args.fps)
     gap_frames = seconds_to_frames(args.gap, args.fps)
-    
+
+    # Auto-grow --tracks when candidate stacking needs more than the user asked
+    # for (only if user didn't explicitly set --tracks).
+    max_stack_size = max((c.get('stack_size', 1) for c in clips), default=1)
+    if max_stack_size > args.tracks and not tracks_user_set:
+        print(f"Auto-growing --tracks from {args.tracks} to {max_stack_size} "
+              f"to fit candidate stacks")
+        args.tracks = max_stack_size
+
     # Track occupancy: track_end[track_idx] = frame when track becomes free
     base_track = 2  # Start on V2 (V1 typically has main video)
     track_end = {i: 0 for i in range(base_track, base_track + args.tracks)}
-    
+
     placements = []
     skipped = 0
-    
+
+    # Group stackable clips together so we can reserve N consecutive tracks
+    # atomically. Solo clips (stack_group is None) keep today's behaviour.
+    groups: list = []  # each item: (group_key_or_None, [clip, ...])
+    seen_groups: dict = {}
     for clip in clips:
-        clip_start = clip['frame']
-        # Use montage duration if this is a montage clip
-        clip_duration = clip.get('montage_duration_frames', duration_frames)
+        key = clip.get('stack_group')
+        if key is None:
+            groups.append((None, [clip]))
+        else:
+            if key not in seen_groups:
+                seen_groups[key] = len(groups)
+                groups.append((key, []))
+            groups[seen_groups[key]][1].append(clip)
+
+    for group_key, group_clips in groups:
+        representative = group_clips[0]
+        clip_start = representative['frame']
+        clip_duration = representative.get('montage_duration_frames', duration_frames)
         clip_end = clip_start + clip_duration
+        effective_gap = gap_frames // 4 if representative.get('is_montage_clip') else gap_frames
+        stack_size = len(group_clips) if group_key is not None else 1
 
-        # Find available track
-        chosen_track = None
-        # For montage clips, use smaller gap
-        effective_gap = gap_frames // 4 if clip.get('is_montage_clip') else gap_frames
-
-        for track_idx in range(base_track, base_track + args.tracks):
-            if clip_start >= track_end[track_idx] + effective_gap:
-                chosen_track = track_idx
+        # Find N consecutive tracks all free at clip_start (or None if solo).
+        chosen_block = None
+        track_range = list(range(base_track, base_track + args.tracks))
+        for start_idx in range(0, len(track_range) - stack_size + 1):
+            block = track_range[start_idx:start_idx + stack_size]
+            if all(clip_start >= track_end[t] + effective_gap for t in block):
+                chosen_block = block
                 break
 
-        if chosen_track is None:
-            # All tracks busy, find one with earliest end
+        if chosen_block is None and stack_size == 1:
+            # Solo clip fallback: let earliest-free track take it (existing behaviour).
             earliest_track = min(track_end, key=track_end.get)
             if clip_start >= track_end[earliest_track]:
-                chosen_track = earliest_track
+                chosen_block = [earliest_track]
             else:
-                # For montage clips, try harder to place them (they're meant to be rapid)
-                if not clip.get('is_montage_clip'):
-                    print(f"  Skipping: {clip['name']} at {frames_to_timecode(clip_start, args.fps)} - all tracks occupied")
+                if not representative.get('is_montage_clip'):
+                    print(f"  Skipping: {representative['name']} at "
+                          f"{frames_to_timecode(clip_start, args.fps)} - all tracks occupied")
                 skipped += 1
                 continue
+        elif chosen_block is None:
+            # Stack wouldn't fit — defer the whole group.
+            print(f"  Skipping stack: {representative['entity']} at "
+                  f"{frames_to_timecode(clip_start, args.fps)} - no {stack_size} "
+                  f"consecutive tracks free")
+            skipped += len(group_clips)
+            continue
 
-        placements.append({
-            'frame': clip_start,
-            'track': chosen_track,
-            'path': clip['path'],
-            'name': clip['name'],
-            'duration_frames': clip_duration,
-            'entity': clip.get('entity', ''),
-            'image_meta': clip.get('image_meta', {}),
-        })
-        track_end[chosen_track] = clip_end
+        # Assign clips within the group: offset 0 (best) → top (highest) track.
+        # Sort group_clips by stack_offset just to be safe.
+        group_clips.sort(key=lambda c: c.get('stack_offset', 0))
+        tracks_top_first = list(reversed(chosen_block))
+        for clip, chosen_track in zip(group_clips, tracks_top_first):
+            placements.append({
+                'frame': clip_start,
+                'track': chosen_track,
+                'path': clip['path'],
+                'name': clip['name'],
+                'duration_frames': clip_duration,
+                'entity': clip.get('entity', ''),
+                'image_meta': clip.get('image_meta', {}),
+            })
+            track_end[chosen_track] = clip_end
 
-        # Show image rotation info
-        img_idx = clip.get('image_index', 0)
-        total_imgs = clip.get('total_images', 1)
-        is_montage = clip.get('is_montage_clip', False)
-        if is_montage:
-            print(f"  V{chosen_track}: {clip['name']} at {frames_to_timecode(clip_start, args.fps)} (montage)")
-        else:
-            rotation_note = f" [image {img_idx + 1}/{total_imgs}]" if total_imgs > 1 else ""
-            print(f"  V{chosen_track}: {clip['name']}{rotation_note} at {frames_to_timecode(clip_start, args.fps)}")
+            img_idx = clip.get('image_index', 0)
+            total_imgs = clip.get('total_images', 1)
+            is_montage = clip.get('is_montage_clip', False)
+            stack_note = ""
+            if stack_size > 1:
+                stack_note = f" [stack {clip.get('stack_offset', 0) + 1}/{stack_size}]"
+            if is_montage:
+                print(f"  V{chosen_track}: {clip['name']} at "
+                      f"{frames_to_timecode(clip_start, args.fps)} (montage)")
+            else:
+                rotation_note = f" [image {img_idx + 1}/{total_imgs}]" if total_imgs > 1 and stack_size == 1 else ""
+                print(f"  V{chosen_track}: {clip['name']}{rotation_note}{stack_note} at "
+                      f"{frames_to_timecode(clip_start, args.fps)}")
 
     print(f"\nPlacing {len(placements)} clips, skipped {skipped}")
 
@@ -914,6 +1004,12 @@ After generating the XML:
             )
             stretch_threshold_frames = seconds_to_frames(args.stretch_threshold, args.fps)
 
+            stacking_active = args.candidates == 0 or args.candidates >= 2
+            allow_recycle = not stacking_active
+            if stacking_active:
+                print("Coverage recycle fillers disabled (stacking mode); "
+                      "stretch-only will still extend short gaps.")
+
             covered_before = sum(p['duration_frames'] for p in placements)
             placements = run_coverage_pass(
                 placements, total_frames,
@@ -923,6 +1019,7 @@ After generating the XML:
                 gap_frames=gap_frames,
                 stretch_threshold_frames=stretch_threshold_frames,
                 fps=args.fps,
+                allow_recycle=allow_recycle,
             )
             covered_after = sum(p['duration_frames'] for p in placements)
             pct_before = 100.0 * covered_before / (total_frames * args.tracks)
