@@ -804,6 +804,17 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     if summary_file:
         cmd.extend(["--summary", str(summary_file)])
 
+    coverage = getattr(args, 'coverage', None)
+    if coverage is not None:
+        srt_path = getattr(args, 'srt', None)
+        if not srt_path:
+            print("Error: --coverage requires --srt", file=sys.stderr)
+            return 1
+        cmd.extend(["--coverage", str(coverage), "--srt", str(srt_path)])
+        stretch = getattr(args, 'stretch_threshold', None)
+        if stretch is not None:
+            cmd.extend(["--stretch-threshold", str(stretch)])
+
     try:
         run_step("Generating FCP XML timeline", cmd)
         print(f"\nXML saved to: {out_path.absolute()}")
@@ -1132,6 +1143,9 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             max_placements=getattr(args, 'max_placements', 3),
             pervasive_max=getattr(args, 'pervasive_max', 2),
             summary_file=str(summary_path) if summary_path.exists() else None,
+            srt=str(args.srt) if getattr(args, 'srt', None) else None,
+            coverage=getattr(args, 'coverage', None),
+            stretch_threshold=getattr(args, 'stretch_threshold', None),
         )
 
         result = cmd_xml(xml_args, config)
@@ -1427,6 +1441,13 @@ Examples:
                             help="Skip the transcript summary step")
     p_pipeline.add_argument("-i", "--interactive", action="store_true",
                             help="Pause for interactive review during disambiguation and download")
+    p_pipeline.add_argument("--coverage", type=float,
+                            help="Target timeline coverage percent (0-100). "
+                                 "Fills timeline gaps via hybrid stretch/recycle "
+                                 "for faceless-YT-style full coverage.")
+    p_pipeline.add_argument("--stretch-threshold", type=float,
+                            help="Gaps shorter than this (seconds) get stretched; "
+                                 "longer gaps get filler clips (default: 5.0)")
 
 
     # Extract command
@@ -1562,6 +1583,14 @@ Examples:
                        help="Max placements for pervasive entities (default: 2)")
     p_xml.add_argument("--summary-file",
                        help="Path to transcript_summary.json (for pervasive entity list)")
+    p_xml.add_argument("--srt",
+                       help="Path to SRT file (required when --coverage is used)")
+    p_xml.add_argument("--coverage", type=float,
+                       help="Target timeline coverage percent (0-100). "
+                            "Fills gaps via hybrid stretch/recycle strategy.")
+    p_xml.add_argument("--stretch-threshold", type=float,
+                       help="Gaps shorter than this (seconds) get stretched; "
+                            "longer gaps get filler clips (default: 5.0)")
 
     # Disambiguate command
     p_disambig = subparsers.add_parser(
