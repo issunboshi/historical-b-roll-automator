@@ -70,6 +70,23 @@ def srt_timecode_to_seconds(tc: str) -> float:
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
 
+def srt_duration_seconds(srt_path: str) -> float:
+    """Return the end time of the final cue in the SRT file, in seconds.
+
+    Used as the denominator for --coverage calculations. Scans once for the
+    last `HH:MM:SS,mmm --> HH:MM:SS,mmm` line and takes the end side.
+    Returns 0.0 if the file has no timecode lines.
+    """
+    last_end = 0.0
+    tc_re = re.compile(r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})')
+    with open(srt_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            m = tc_re.search(line)
+            if m:
+                last_end = srt_timecode_to_seconds(m.group(2))
+    return last_end
+
+
 def seconds_to_frames(seconds: float, fps: float) -> int:
     """Convert seconds to frame count."""
     return int(round(seconds * fps))
@@ -388,6 +405,189 @@ def select_occurrences(occurrences: list, budget: int) -> list:
     return [occurrences[i] for i in sorted(selected_indices)]
 
 
+def build_filler_image_pool(qualified_entities: dict, pervasive_entities: list,
+                            allow_non_pd: bool) -> list:
+    """Build the list of (entity_name, image_meta) candidates for gap-filling.
+
+    Ordered so pervasive/background entities come first (they fit "anywhere"
+    without tying the visual to a specific narration beat), then high-priority
+    entities. The caller cycles through this list as it fills gaps.
+    """
+    pervasive_set = set(pervasive_entities or [])
+    pool = []
+
+    def _images_for(name: str, payload: dict) -> list:
+        imgs = payload.get('images', [])
+        if not allow_non_pd:
+            imgs = [img for img in imgs if img.get('category') == 'public_domain']
+        return imgs
+
+    # Pervasive entities first
+    for name in pervasive_entities or []:
+        payload = qualified_entities.get(name)
+        if not payload:
+            continue
+        for img in _images_for(name, payload):
+            pool.append((name, img))
+
+    # Then everyone else, highest priority first
+    remaining = [
+        (name, payload) for name, payload in qualified_entities.items()
+        if name not in pervasive_set
+    ]
+    remaining.sort(key=lambda kv: kv[1].get('priority', 0.0), reverse=True)
+    for name, payload in remaining:
+        for img in _images_for(name, payload):
+            pool.append((name, img))
+
+    # Filter to only files that actually exist on disk
+    return [(name, img) for name, img in pool
+            if img.get('path') and os.path.exists(img['path'])]
+
+
+def fill_gap_hybrid(gap_start_frame: int,
+                    gap_end_frame: int,
+                    prev_placement: dict,
+                    image_pool: list,
+                    pool_cursor: int,
+                    duration_frames: int,
+                    gap_frames: int,
+                    stretch_threshold_frames: int,
+                    fps: float) -> tuple:
+    """Decide how to fill one gap on one track.
+
+    This is the core coverage strategy. Called once per gap, per track.
+
+    Args:
+        gap_start_frame: Frame where the gap begins (== prev clip's end frame,
+            or 0 if there is no prev clip on this track yet).
+        gap_end_frame: Frame where the next clip starts, OR total_frames if
+            this is the trailing gap at the end of the timeline.
+        prev_placement: The placement dict immediately before this gap on the
+            same track, or None if this is the leading gap. You may mutate
+            `prev_placement['duration_frames']` to stretch it.
+        image_pool: List of (entity_name, image_meta_dict) tuples, already
+            filtered for existence and license.
+        pool_cursor: Current index into image_pool; use and advance modulo
+            len(image_pool) so fillers rotate.
+        duration_frames: The standard clip duration to use for recycled
+            fillers (from --duration).
+        gap_frames: Min gap to leave between clips (from --gap).
+        stretch_threshold_frames: Gaps below this length should be stretched;
+            gaps at or above should be recycled. (5 seconds worth by default.)
+        fps: Frame rate (rarely needed; available for anything time-based).
+
+    Returns:
+        (new_placements, new_pool_cursor) where:
+            new_placements: list of dicts with keys
+                {frame, track, path, name, duration_frames, entity, image_meta}
+                (track is filled in by the caller — omit it here).
+            new_pool_cursor: advanced cursor position.
+
+    Strategy (hybrid):
+        - Short gap  → stretch `prev_placement` by extending its
+          duration_frames up to (gap_end_frame - gap_frames). Return
+          ([], pool_cursor).
+        - Long gap   → emit one or more filler clips of length
+          `duration_frames`, spaced by `gap_frames`, pulling images from
+          `image_pool` starting at `pool_cursor`. Return
+          (new_placements, advanced_pool_cursor).
+
+    TODO(you): implement the hybrid policy. Keep it to ~10 lines.
+
+    Tips:
+        * `gap_length = gap_end_frame - gap_start_frame`.
+        * Don't stretch the leading gap (prev_placement is None) — recycle
+          instead, or you'll leave the timeline start empty.
+        * Don't emit a filler whose end exceeds gap_end_frame - gap_frames.
+        * If image_pool is empty, return ([], pool_cursor) as a no-op.
+    """
+    gap_length = gap_end_frame - gap_start_frame
+    if gap_length <= 0 or not image_pool:
+        return [], pool_cursor
+
+    # Short gap with something to stretch: extend prev clip up to next start.
+    if gap_length < stretch_threshold_frames and prev_placement is not None:
+        prev_placement['duration_frames'] = max(
+            prev_placement['duration_frames'],
+            gap_end_frame - gap_frames - prev_placement['frame'],
+        )
+        return [], pool_cursor
+
+    # Long gap (or leading gap with no prev to stretch): emit fillers.
+    fillers = []
+    cursor_frame = gap_start_frame
+    latest_end = gap_end_frame if prev_placement is None else gap_end_frame - gap_frames
+    while cursor_frame + duration_frames <= latest_end:
+        entity_name, image_meta = image_pool[pool_cursor % len(image_pool)]
+        fillers.append({
+            'frame': cursor_frame,
+            'path': image_meta['path'],
+            'name': f"{entity_name} (filler)",
+            'duration_frames': duration_frames,
+            'entity': entity_name,
+            'image_meta': image_meta,
+        })
+        pool_cursor += 1
+        cursor_frame += duration_frames + gap_frames
+
+    return fillers, pool_cursor
+
+
+def run_coverage_pass(placements: list,
+                      total_frames: int,
+                      base_track: int,
+                      num_tracks: int,
+                      image_pool: list,
+                      duration_frames: int,
+                      gap_frames: int,
+                      stretch_threshold_frames: int,
+                      fps: float) -> list:
+    """Walk each track, find gaps, and call fill_gap_hybrid on each.
+
+    Returns the full placement list (original + new fillers). Mutates
+    existing placements when the strategy chooses to stretch.
+    """
+    if not image_pool or total_frames <= 0:
+        return placements
+
+    # Group placements by track, sorted by frame
+    by_track: dict = {t: [] for t in range(base_track, base_track + num_tracks)}
+    for p in placements:
+        by_track.setdefault(p['track'], []).append(p)
+    for t in by_track:
+        by_track[t].sort(key=lambda p: p['frame'])
+
+    new_placements = []
+    pool_cursor = 0
+
+    for track_idx, track_clips in by_track.items():
+        # Build list of (gap_start, gap_end, prev_placement) for this track.
+        # Include leading gap (0 → first clip) and trailing gap (last clip → end).
+        prev_end = 0
+        prev_placement = None
+        gaps = []
+        for clip in track_clips:
+            if clip['frame'] > prev_end:
+                gaps.append((prev_end, clip['frame'], prev_placement))
+            prev_end = clip['frame'] + clip['duration_frames']
+            prev_placement = clip
+        if prev_end < total_frames:
+            gaps.append((prev_end, total_frames, prev_placement))
+
+        for gap_start, gap_end, prev in gaps:
+            fillers, pool_cursor = fill_gap_hybrid(
+                gap_start, gap_end, prev,
+                image_pool, pool_cursor,
+                duration_frames, gap_frames, stretch_threshold_frames, fps,
+            )
+            for f in fillers:
+                f['track'] = track_idx
+                new_placements.append(f)
+
+    return placements + new_placements
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Generate FCP XML for B-Roll placement in DaVinci Resolve',
@@ -429,6 +629,15 @@ After generating the XML:
                         help='Max placements for pervasive/background entities (default: 2)')
     parser.add_argument('--summary',
                         help='Path to transcript_summary.json (for pervasive entity list)')
+    parser.add_argument('--srt',
+                        help='Path to SRT file (required for --coverage, to compute total duration)')
+    parser.add_argument('--coverage', type=float, default=None,
+                        help='Target timeline coverage percent (0-100). '
+                             'Fills gaps via hybrid stretch/recycle strategy. '
+                             'Requires --srt. Default off.')
+    parser.add_argument('--stretch-threshold', type=float, default=5.0,
+                        help='Gaps shorter than this (seconds) are stretched; '
+                             'longer gaps get filler clips (default: 5.0)')
 
     args = parser.parse_args()
     
@@ -688,6 +897,42 @@ After generating the XML:
         if len(excluded_entities) > 10:
             print(f"  ... and {len(excluded_entities) - 10} more")
     
+    # Optional coverage fill pass (hybrid stretch + recycle)
+    if args.coverage is not None:
+        if not args.srt:
+            print("ERROR: --coverage requires --srt for duration calculation",
+                  file=sys.stderr)
+            sys.exit(1)
+        total_seconds = srt_duration_seconds(args.srt)
+        if total_seconds <= 0:
+            print("WARNING: Could not determine SRT duration; skipping coverage pass",
+                  file=sys.stderr)
+        else:
+            total_frames = seconds_to_frames(total_seconds, args.fps)
+            image_pool = build_filler_image_pool(
+                qualified_entities, pervasive_entities, args.allow_non_pd,
+            )
+            stretch_threshold_frames = seconds_to_frames(args.stretch_threshold, args.fps)
+
+            covered_before = sum(p['duration_frames'] for p in placements)
+            placements = run_coverage_pass(
+                placements, total_frames,
+                base_track=2, num_tracks=args.tracks,
+                image_pool=image_pool,
+                duration_frames=duration_frames,
+                gap_frames=gap_frames,
+                stretch_threshold_frames=stretch_threshold_frames,
+                fps=args.fps,
+            )
+            covered_after = sum(p['duration_frames'] for p in placements)
+            pct_before = 100.0 * covered_before / (total_frames * args.tracks)
+            pct_after = 100.0 * covered_after / (total_frames * args.tracks)
+            print(f"\nCoverage pass (target {args.coverage:.0f}%):")
+            print(f"  Timeline duration: {total_seconds:.1f}s")
+            print(f"  Image pool size: {len(image_pool)}")
+            print(f"  Per-track coverage: {pct_before:.1f}% → {pct_after:.1f}% "
+                  f"(averaged across {args.tracks} tracks)")
+
     # Generate XML
     xml_root = create_fcp_xml(placements, args.fps, args.timeline_name, args.duration)
     xml_string = prettify_xml(xml_root)

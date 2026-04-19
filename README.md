@@ -116,6 +116,8 @@ python broll.py pipeline --srt video.srt [options]
 | `--pervasive-entities TEXT` | auto-detected | Comma-separated override list of pervasive entities |
 | `--max-placements N` | 3 | Max clip placements per entity on timeline |
 | `--pervasive-max N` | 2 | Max placements for pervasive/background entities |
+| `--coverage PCT` | — | Target timeline coverage % (0-100). Fills gaps via hybrid stretch/recycle for faceless-YT-style full coverage |
+| `--stretch-threshold N` | 5.0 | Gaps shorter than this (seconds) get stretched; longer gaps get filler clips |
 | `--skip-summary` | — | Skip the transcript summary step |
 
 ### Visual Elements & Montages
@@ -330,6 +332,9 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--max-placements N` | Max clip placements per entity (default: 3) |
 | `--pervasive-max N` | Max placements for pervasive entities (default: 2) |
 | `--summary-file PATH` | Path to transcript_summary.json |
+| `--srt PATH` | Path to SRT file (required with `--coverage`) |
+| `--coverage PCT` | Target timeline coverage % (0-100); fills gaps via hybrid stretch/recycle |
+| `--stretch-threshold N` | Gap length (seconds) below which we stretch the previous clip instead of inserting filler (default: 5.0) |
 
 #### inject
 
@@ -833,6 +838,16 @@ Use frequency capping flags:
 ```bash
 python broll.py pipeline --srt video.srt --max-placements 3 --pervasive-max 2
 ```
+
+### Need wall-to-wall coverage (faceless YouTube)
+
+Use `--coverage` to fill gaps with either a held-previous-clip (short gaps) or recycled fillers from the entity pool (long gaps):
+```bash
+python broll.py pipeline --srt video.srt --coverage 90
+# or on an existing entities map
+python broll.py xml --map strategies_entities.json --srt video.srt --coverage 90
+```
+Tune the crossover with `--stretch-threshold` (default 5s). Pervasive entities are preferred for filler, so generic background imagery fills gaps rather than specific people or places.
 
 Or override pervasive entities:
 ```bash
