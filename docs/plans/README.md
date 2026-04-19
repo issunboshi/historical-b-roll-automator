@@ -12,6 +12,7 @@ Design documents for features and architectural decisions. New plans go in this 
 
 | Date | Plan | Status |
 |------|------|--------|
+| 2026-04-18 | [Full Coverage Mode](archive/2026-04-18-full-coverage-mode.md) — `--coverage` flag for wall-to-wall B-roll via hybrid stretch/recycle gap-filling | Completed |
 | 2026-02-10 | [Quality Improvements](archive/2026-02-10-quality-improvements.md) — Frequency capping, transcript summarization, entity deduplication, era-aware disambiguation | Completed |
 | 2026-02-05 | [Visual Elements & Markers](archive/2026-02-05-visual-elements-markers.md) — Generate DaVinci Resolve markers from visual elements | Completed |
 | 2026-02-04 | [API Layer](archive/2026-02-04-api-layer-implementation.md) — FastAPI endpoints, pipeline executor, Dockerfile | Completed |

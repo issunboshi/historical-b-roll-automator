@@ -502,8 +502,36 @@ def fill_gap_hybrid(gap_start_frame: int,
         * Don't emit a filler whose end exceeds gap_end_frame - gap_frames.
         * If image_pool is empty, return ([], pool_cursor) as a no-op.
     """
-    # TODO: implement. Current behaviour: no-op (coverage mode does nothing).
-    return [], pool_cursor
+    gap_length = gap_end_frame - gap_start_frame
+    if gap_length <= 0 or not image_pool:
+        return [], pool_cursor
+
+    # Short gap with something to stretch: extend prev clip up to next start.
+    if gap_length < stretch_threshold_frames and prev_placement is not None:
+        prev_placement['duration_frames'] = max(
+            prev_placement['duration_frames'],
+            gap_end_frame - gap_frames - prev_placement['frame'],
+        )
+        return [], pool_cursor
+
+    # Long gap (or leading gap with no prev to stretch): emit fillers.
+    fillers = []
+    cursor_frame = gap_start_frame
+    latest_end = gap_end_frame if prev_placement is None else gap_end_frame - gap_frames
+    while cursor_frame + duration_frames <= latest_end:
+        entity_name, image_meta = image_pool[pool_cursor % len(image_pool)]
+        fillers.append({
+            'frame': cursor_frame,
+            'path': image_meta['path'],
+            'name': f"{entity_name} (filler)",
+            'duration_frames': duration_frames,
+            'entity': entity_name,
+            'image_meta': image_meta,
+        })
+        pool_cursor += 1
+        cursor_frame += duration_frames + gap_frames
+
+    return fillers, pool_cursor
 
 
 def run_coverage_pass(placements: list,
