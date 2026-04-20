@@ -815,6 +815,10 @@ def cmd_xml(args: argparse.Namespace, config: Dict[str, Any]) -> int:
         if stretch is not None:
             cmd.extend(["--stretch-threshold", str(stretch)])
 
+    candidates = getattr(args, 'candidates', None)
+    if candidates is not None:
+        cmd.extend(["--candidates", str(candidates)])
+
     try:
         run_step("Generating FCP XML timeline", cmd)
         print(f"\nXML saved to: {out_path.absolute()}")
@@ -1146,6 +1150,7 @@ def cmd_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> int:
             srt=str(args.srt) if getattr(args, 'srt', None) else None,
             coverage=getattr(args, 'coverage', None),
             stretch_threshold=getattr(args, 'stretch_threshold', None),
+            candidates=getattr(args, 'candidates', None),
         )
 
         result = cmd_xml(xml_args, config)
@@ -1448,6 +1453,10 @@ Examples:
     p_pipeline.add_argument("--stretch-threshold", type=float,
                             help="Gaps shorter than this (seconds) get stretched; "
                                  "longer gaps get filler clips (default: 5.0)")
+    p_pipeline.add_argument("--candidates",
+                            help="Images per occurrence stacked on consecutive tracks. "
+                                 "Integer >= 1 or 'all' / '0' for every candidate "
+                                 "(default: 1 = single best image).")
 
 
     # Extract command
@@ -1591,6 +1600,10 @@ Examples:
     p_xml.add_argument("--stretch-threshold", type=float,
                        help="Gaps shorter than this (seconds) get stretched; "
                             "longer gaps get filler clips (default: 5.0)")
+    p_xml.add_argument("--candidates",
+                       help="Images per occurrence stacked on consecutive tracks. "
+                            "Integer >= 1 or 'all' / '0' for every candidate "
+                            "(default: 1 = single best image).")
 
     # Disambiguate command
     p_disambig = subparsers.add_parser(

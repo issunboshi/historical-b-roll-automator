@@ -118,6 +118,7 @@ python broll.py pipeline --srt video.srt [options]
 | `--pervasive-max N` | 2 | Max placements for pervasive/background entities |
 | `--coverage PCT` | — | Target timeline coverage % (0-100). Fills gaps via hybrid stretch/recycle for faceless-YT-style full coverage |
 | `--stretch-threshold N` | 5.0 | Gaps shorter than this (seconds) get stretched; longer gaps get filler clips |
+| `--candidates N` | 1 | Images per occurrence, stacked on consecutive tracks so you can pick the winner in the NLE. `all` (or `0`) stacks every candidate; auto-grows track count |
 | `--skip-summary` | — | Skip the transcript summary step |
 
 ### Visual Elements & Montages
@@ -335,6 +336,7 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--srt PATH` | Path to SRT file (required with `--coverage`) |
 | `--coverage PCT` | Target timeline coverage % (0-100); fills gaps via hybrid stretch/recycle |
 | `--stretch-threshold N` | Gap length (seconds) below which we stretch the previous clip instead of inserting filler (default: 5.0) |
+| `--candidates N` | Images per occurrence stacked on consecutive tracks (default: 1). Use `all` / `0` to stack every candidate. Pairs naturally with `--coverage` (stretch-only; recycle fillers are suppressed in stacking mode). |
 
 #### inject
 
@@ -838,6 +840,16 @@ Use frequency capping flags:
 ```bash
 python broll.py pipeline --srt video.srt --max-placements 3 --pervasive-max 2
 ```
+
+### Want to choose the winning image in the editor
+
+Use `--candidates` to stack every candidate image for an entity on consecutive video tracks at the same frame. Disable/solo tracks in Resolve to pick the winner, then flatten:
+```bash
+python broll.py pipeline --srt video.srt --candidates all
+# or a fixed cap (e.g. top 4 per entity)
+python broll.py xml --map strategies_entities.json --candidates 4
+```
+Offset 0 (the top-ranked image) always goes to the highest track within the stack's block, so whatever's on top by default is the pipeline's best guess. Track count auto-grows to fit the largest stack unless you override `--tracks`.
 
 ### Need wall-to-wall coverage (faceless YouTube)
 
