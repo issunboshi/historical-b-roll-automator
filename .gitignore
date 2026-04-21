@@ -85,7 +85,10 @@ venv.bak/
 # Internal dev tooling
 .planning/
 .serena/
-.claude/
+
+# Claude Code: share project-scope automation, keep per-user state local
+.claude/*.local.*
+.claude/worktrees/
 
 # Project output files
 output/
