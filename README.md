@@ -314,7 +314,7 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--era-end YEAR` | End of era range for image ordering |
 | `-v, --verbose` | Show per-entity details |
 | `-i, --interactive` | Interactively retry failed downloads with alternative search terms |
-| `--retry-failed` | Retry only entities that failed (`download_status=failed` or `no_images`) in a previous run |
+| `--retry-failed` | Retry entities with `download_status` in `{failed, no_images, rate_limited}` from a previous run. `rate_limited` entities are those where the Wikimedia upload CDN returned HTTP 429 twice — they're eligible for retry once the CDN cools. |
 
 #### xml
 | Flag | Description |

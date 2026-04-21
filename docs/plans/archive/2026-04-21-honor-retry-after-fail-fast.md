@@ -1,6 +1,6 @@
 # Honor Retry-After, Fail Fast on Rate Limits
 
-**Status:** In Progress
+**Status:** Completed
 **Date:** 2026-04-21
 **Branch:** `feature/honor-retry-after-fail-fast`
 
