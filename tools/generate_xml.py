@@ -405,44 +405,119 @@ def select_occurrences(occurrences: list, budget: int) -> list:
     return [occurrences[i] for i in sorted(selected_indices)]
 
 
-def build_filler_image_pool(qualified_entities: dict, pervasive_entities: list,
-                            allow_non_pd: bool) -> list:
-    """Build the list of (entity_name, image_meta) candidates for gap-filling.
+def build_filler_entity_pool(qualified_entities: dict, pervasive_entities: list,
+                             allow_non_pd: bool) -> list:
+    """Return [(entity_name, [images]), ...] — per-entity grouping for fillers.
 
-    Ordered so pervasive/background entities come first (they fit "anywhere"
-    without tying the visual to a specific narration beat), then high-priority
-    entities. The caller cycles through this list as it fills gaps.
+    Pervasive/background entities come first (they visually fit anywhere);
+    then remaining entities ordered by priority descending. Each entry groups
+    *all* disk-present candidate images for one entity — used by stacked
+    recycle fillers so a gap's whole stack comes from a single entity
+    (mirrors primary --candidates behaviour).
+
+    Empty entities (no PD images when --allow-non-pd is off, or all paths
+    missing) are dropped.
     """
     pervasive_set = set(pervasive_entities or [])
-    pool = []
 
-    def _images_for(name: str, payload: dict) -> list:
+    def _images_for(payload: dict) -> list:
         imgs = payload.get('images', [])
         if not allow_non_pd:
             imgs = [img for img in imgs if img.get('category') == 'public_domain']
-        return imgs
+        return [img for img in imgs
+                if img.get('path') and os.path.exists(img['path'])]
 
-    # Pervasive entities first
+    pool = []
     for name in pervasive_entities or []:
         payload = qualified_entities.get(name)
         if not payload:
             continue
-        for img in _images_for(name, payload):
-            pool.append((name, img))
+        imgs = _images_for(payload)
+        if imgs:
+            pool.append((name, imgs))
 
-    # Then everyone else, highest priority first
-    remaining = [
-        (name, payload) for name, payload in qualified_entities.items()
-        if name not in pervasive_set
-    ]
+    remaining = [(n, p) for n, p in qualified_entities.items()
+                 if n not in pervasive_set]
     remaining.sort(key=lambda kv: kv[1].get('priority', 0.0), reverse=True)
     for name, payload in remaining:
-        for img in _images_for(name, payload):
-            pool.append((name, img))
+        imgs = _images_for(payload)
+        if imgs:
+            pool.append((name, imgs))
 
-    # Filter to only files that actually exist on disk
-    return [(name, img) for name, img in pool
-            if img.get('path') and os.path.exists(img['path'])]
+    return pool
+
+
+def build_filler_image_pool(qualified_entities: dict, pervasive_entities: list,
+                            allow_non_pd: bool) -> list:
+    """Flat (entity_name, image_meta) list — the legacy flat pool shape.
+
+    Kept for the non-stacking (default --candidates 1) coverage path which
+    rotates through every candidate image individually for maximum variety.
+    Derived from build_filler_entity_pool() so ordering stays in sync.
+    """
+    entity_pool = build_filler_entity_pool(
+        qualified_entities, pervasive_entities, allow_non_pd,
+    )
+    return [(name, img) for name, imgs in entity_pool for img in imgs]
+
+
+def filler_stack_size(entity_images: list, args_candidates: int,
+                      max_tracks: int) -> int:
+    """Decide how tall a filler stack should be for ONE gap-filler entity.
+
+    Called by the stacked coverage pass once per filler slot. The pass pulls
+    an entity from the filler pool, asks this function how tall to stack,
+    then emits that many placements across consecutive tracks at the gap
+    position.
+
+    Args:
+        entity_images: candidate images for this entity (after PD filter).
+        args_candidates: the parsed --candidates value
+            - 0   → "--candidates all" (use every available candidate)
+            - >=2 → fixed stack height requested by the user
+            - 1   → no stacking (this function shouldn't be called in that
+                    mode, but return 1 defensively)
+        max_tracks: upper bound (args.tracks); a filler stack can never
+            exceed this, regardless of policy.
+
+    Returns:
+        int >= 0 — how many images from entity_images to stack.
+        Return 0 to *skip* this entity entirely (caller rotates on).
+
+    TODO(you): this is the taste decision that shapes the filler aesthetic.
+    The default implementation below mirrors --candidates semantics and
+    permits short stacks (use whatever images the entity has). Decide
+    whether you want a stricter policy — options:
+
+      (a) Permissive (current default):
+          If an entity has fewer images than the requested stack height,
+          stack whatever is available. Pros: every filler gets used,
+          better coverage. Cons: mixed stack heights across the timeline
+          — a 2-image filler entity will show gaps on upper tracks
+          compared to a 5-image primary stack elsewhere.
+
+      (b) Strict ("full stacks only"):
+          Return 0 whenever len(entity_images) < requested height, so
+          shallow entities are skipped and the caller rotates to the next
+          filler candidate. Pros: visually uniform stacks across the
+          whole timeline. Cons: entities with few images are never used
+          as fillers — might leave gaps if most pool entities are shallow.
+
+      (c) Min-threshold hybrid:
+          Skip entities with < some floor (e.g. 2 images), but otherwise
+          allow short stacks. Middle ground.
+
+    Keep the implementation to ~5–10 lines.
+    """
+    if args_candidates == 1:
+        return 1
+    available = len(entity_images)
+    if args_candidates == 0:
+        target = available
+    else:  # args_candidates >= 2
+        target = args_candidates
+    # DEFAULT POLICY (a) — permissive. Replace to pick (b) or (c).
+    return max(0, min(target, available, max_tracks))
 
 
 def fill_gap_hybrid(gap_start_frame: int,
@@ -539,6 +614,119 @@ def fill_gap_hybrid(gap_start_frame: int,
     return fillers, pool_cursor
 
 
+def _gaps_for_track(track_clips: list, total_frames: int) -> list:
+    """Return [(gap_start, gap_end, prev_placement_or_None), ...] for a track."""
+    prev_end = 0
+    prev_placement = None
+    gaps = []
+    for clip in track_clips:
+        if clip['frame'] > prev_end:
+            gaps.append((prev_end, clip['frame'], prev_placement))
+        prev_end = clip['frame'] + clip['duration_frames']
+        prev_placement = clip
+    if prev_end < total_frames:
+        gaps.append((prev_end, total_frames, prev_placement))
+    return gaps
+
+
+def _track_free(placements: list, track: int, frame_start: int,
+                frame_end: int, gap_frames: int) -> bool:
+    """True if `track` has no clip overlapping [frame_start, frame_end],
+    accounting for the required `gap_frames` buffer on either side."""
+    for p in placements:
+        if p.get('track') != track:
+            continue
+        p_start = p['frame']
+        p_end = p_start + p.get('duration_frames', 0)
+        if not (frame_end + gap_frames <= p_start or
+                frame_start >= p_end + gap_frames):
+            return False
+    return True
+
+
+def _emit_stacked_fillers_in_gap(gap_start: int,
+                                 gap_end: int,
+                                 entity_pool: list,
+                                 entity_cursor: int,
+                                 duration_frames: int,
+                                 gap_frames: int,
+                                 base_track: int,
+                                 num_tracks: int,
+                                 args_candidates: int,
+                                 existing_placements: list) -> tuple:
+    """Fill one gap on the base_track with one or more stacked fillers.
+
+    Each filler occupies `stack_size` consecutive tracks (base_track →
+    base_track+stack_size-1) at the same frame. Top candidate (index 0)
+    goes on the highest track, matching primary-pass convention.
+
+    Skips time slots where any required track in the stack range is busy
+    (e.g. because a taller primary stack elsewhere left non-base clips
+    still running inside this V2 gap).
+
+    Args:
+        gap_start/gap_end: gap boundaries on the base_track (post-stretch).
+        entity_pool: [(name, [imgs]), ...] per-entity groups.
+        entity_cursor: rotation index into entity_pool; advanced and
+            returned so gap-to-gap rotation is continuous.
+        existing_placements: all placements so far (including any stacked
+            fillers emitted earlier in this pass) — used for occupancy
+            checks against non-base tracks.
+
+    Returns:
+        (new_placements, new_entity_cursor).
+    """
+    if not entity_pool or gap_end - gap_start <= 0:
+        return [], entity_cursor
+
+    new_placements = []
+    cursor_frame = gap_start
+    max_tracks = num_tracks
+
+    while cursor_frame + duration_frames <= gap_end - gap_frames:
+        # Try entities in rotation until one fits at this time slot.
+        attempts = 0
+        placed_clip = False
+        while attempts < len(entity_pool):
+            name, imgs = entity_pool[entity_cursor % len(entity_pool)]
+            entity_cursor += 1
+            attempts += 1
+            stack_size = filler_stack_size(imgs, args_candidates, max_tracks)
+            if stack_size <= 0 or stack_size > num_tracks:
+                continue
+            frame_end = cursor_frame + duration_frames
+            # Every track the stack would occupy must be free at this slot.
+            stack_tracks = range(base_track, base_track + stack_size)
+            combined = existing_placements + new_placements
+            if not all(_track_free(combined, t, cursor_frame, frame_end, gap_frames)
+                       for t in stack_tracks):
+                continue
+            # Emit stack: offset 0 (top candidate) → highest track.
+            for offset, img in enumerate(imgs[:stack_size]):
+                track = base_track + stack_size - 1 - offset
+                stack_note = (f" [filler stack {offset + 1}/{stack_size}]"
+                              if stack_size > 1 else " (filler)")
+                new_placements.append({
+                    'frame': cursor_frame,
+                    'track': track,
+                    'path': img['path'],
+                    'name': f"{name}{stack_note}",
+                    'duration_frames': duration_frames,
+                    'entity': name,
+                    'image_meta': img,
+                })
+            placed_clip = True
+            break
+
+        if not placed_clip:
+            # Nothing fit at this time slot — move on rather than spin.
+            pass
+
+        cursor_frame += duration_frames + gap_frames
+
+    return new_placements, entity_cursor
+
+
 def run_coverage_pass(placements: list,
                       total_frames: int,
                       base_track: int,
@@ -548,8 +736,20 @@ def run_coverage_pass(placements: list,
                       gap_frames: int,
                       stretch_threshold_frames: int,
                       fps: float,
-                      allow_recycle: bool = True) -> list:
-    """Walk each track, find gaps, and call fill_gap_hybrid on each.
+                      allow_recycle: bool = True,
+                      stack_height: int = 1,
+                      entity_pool: list = None,
+                      args_candidates: int = 1) -> list:
+    """Walk each track, find gaps, and fill via stretch + recycle.
+
+    Two modes:
+      - Flat (stack_height <= 1): per-track stretch + per-track single-clip
+        recycle. Same behaviour as before this pass supported stacking.
+      - Stacked (stack_height >= 2 and entity_pool provided): per-track
+        stretch still runs (it composes fine on a per-track basis, each
+        track just extends its own clip). Recycle runs on base_track only
+        and emits *stacks* of fillers across consecutive tracks, so gap
+        fillers visually match the primary stacked placements.
 
     Returns the full placement list (original + new fillers). Mutates
     existing placements when the strategy chooses to stretch. When
@@ -557,10 +757,17 @@ def run_coverage_pass(placements: list,
     """
     if total_frames <= 0:
         return placements
-    if not image_pool and not allow_recycle:
-        # Stretch-only mode still needs a walk to extend prev clips.
+
+    stacked_mode = (allow_recycle and stack_height >= 2
+                    and bool(entity_pool))
+
+    # If we have no way to emit new clips AND no prev clips to stretch, bail.
+    if not allow_recycle and not placements:
+        return placements
+    if not stacked_mode and not image_pool and not allow_recycle:
+        # Stretch-only still needs a walk.
         pass
-    elif not image_pool:
+    elif not stacked_mode and not image_pool:
         return placements
 
     # Group placements by track, sorted by frame
@@ -573,30 +780,47 @@ def run_coverage_pass(placements: list,
     new_placements = []
     pool_cursor = 0
 
-    for track_idx, track_clips in by_track.items():
-        # Build list of (gap_start, gap_end, prev_placement) for this track.
-        # Include leading gap (0 → first clip) and trailing gap (last clip → end).
-        prev_end = 0
-        prev_placement = None
-        gaps = []
-        for clip in track_clips:
-            if clip['frame'] > prev_end:
-                gaps.append((prev_end, clip['frame'], prev_placement))
-            prev_end = clip['frame'] + clip['duration_frames']
-            prev_placement = clip
-        if prev_end < total_frames:
-            gaps.append((prev_end, total_frames, prev_placement))
+    if stacked_mode:
+        # Phase 1: per-track STRETCH only (allow_recycle=False). Mutates prev
+        # clips in place to fill short gaps on every track. No new clips.
+        for track_idx, track_clips in by_track.items():
+            for gap_start, gap_end, prev in _gaps_for_track(track_clips, total_frames):
+                fill_gap_hybrid(
+                    gap_start, gap_end, prev,
+                    [], 0,
+                    duration_frames, gap_frames, stretch_threshold_frames, fps,
+                    allow_recycle=False,
+                )
 
-        for gap_start, gap_end, prev in gaps:
-            fillers, pool_cursor = fill_gap_hybrid(
-                gap_start, gap_end, prev,
-                image_pool, pool_cursor,
-                duration_frames, gap_frames, stretch_threshold_frames, fps,
-                allow_recycle=allow_recycle,
+        # Rebuild base-track clip list post-stretch: durations changed, so
+        # gap boundaries moved. Only base_track matters for phase 2.
+        base_clips = sorted(
+            (p for p in placements if p.get('track') == base_track),
+            key=lambda p: p['frame'],
+        )
+        entity_cursor = 0
+        for gap_start, gap_end, _prev in _gaps_for_track(base_clips, total_frames):
+            emitted, entity_cursor = _emit_stacked_fillers_in_gap(
+                gap_start, gap_end,
+                entity_pool, entity_cursor,
+                duration_frames, gap_frames,
+                base_track, num_tracks, args_candidates,
+                existing_placements=placements + new_placements,
             )
-            for f in fillers:
-                f['track'] = track_idx
-                new_placements.append(f)
+            new_placements.extend(emitted)
+    else:
+        # Flat mode (legacy): per-track stretch + single-clip recycle.
+        for track_idx, track_clips in by_track.items():
+            for gap_start, gap_end, prev in _gaps_for_track(track_clips, total_frames):
+                fillers, pool_cursor = fill_gap_hybrid(
+                    gap_start, gap_end, prev,
+                    image_pool, pool_cursor,
+                    duration_frames, gap_frames, stretch_threshold_frames, fps,
+                    allow_recycle=allow_recycle,
+                )
+                for f in fillers:
+                    f['track'] = track_idx
+                    new_placements.append(f)
 
     return placements + new_placements
 
@@ -1002,13 +1226,20 @@ After generating the XML:
             image_pool = build_filler_image_pool(
                 qualified_entities, pervasive_entities, args.allow_non_pd,
             )
+            entity_pool = build_filler_entity_pool(
+                qualified_entities, pervasive_entities, args.allow_non_pd,
+            )
             stretch_threshold_frames = seconds_to_frames(args.stretch_threshold, args.fps)
 
+            # Stack height for gap-fillers mirrors --candidates semantics.
+            # 0 ("all") → variable, decided per-entity by filler_stack_size().
+            # >=2      → fixed N per filler (capped per-entity).
+            # 1        → flat mode, no stacking.
             stacking_active = args.candidates == 0 or args.candidates >= 2
-            allow_recycle = not stacking_active
+            stack_height = max(2, args.candidates) if stacking_active else 1
             if stacking_active:
-                print("Coverage recycle fillers disabled (stacking mode); "
-                      "stretch-only will still extend short gaps.")
+                print(f"Coverage stacked fillers ON: stack_height~{stack_height} "
+                      f"(per-entity, capped at --tracks={args.tracks})")
 
             covered_before = sum(p['duration_frames'] for p in placements)
             placements = run_coverage_pass(
@@ -1019,14 +1250,18 @@ After generating the XML:
                 gap_frames=gap_frames,
                 stretch_threshold_frames=stretch_threshold_frames,
                 fps=args.fps,
-                allow_recycle=allow_recycle,
+                allow_recycle=True,
+                stack_height=stack_height,
+                entity_pool=entity_pool,
+                args_candidates=args.candidates,
             )
             covered_after = sum(p['duration_frames'] for p in placements)
             pct_before = 100.0 * covered_before / (total_frames * args.tracks)
             pct_after = 100.0 * covered_after / (total_frames * args.tracks)
             print(f"\nCoverage pass (target {args.coverage:.0f}%):")
             print(f"  Timeline duration: {total_seconds:.1f}s")
-            print(f"  Image pool size: {len(image_pool)}")
+            print(f"  Image pool size: {len(image_pool)} images / "
+                  f"{len(entity_pool)} entities")
             print(f"  Per-track coverage: {pct_before:.1f}% → {pct_after:.1f}% "
                   f"(averaged across {args.tracks} tracks)")
 
