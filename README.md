@@ -336,7 +336,7 @@ python broll.py inject --map entities_map.json --entity "Garnet Wolseley" --imag
 | `--srt PATH` | Path to SRT file (required with `--coverage`) |
 | `--coverage PCT` | Target timeline coverage % (0-100); fills gaps via hybrid stretch/recycle |
 | `--stretch-threshold N` | Gap length (seconds) below which we stretch the previous clip instead of inserting filler (default: 5.0) |
-| `--candidates N` | Images per occurrence stacked on consecutive tracks (default: 1). Use `all` / `0` to stack every candidate. Pairs naturally with `--coverage` (stretch-only; recycle fillers are suppressed in stacking mode). |
+| `--candidates N` | Images per occurrence stacked on consecutive tracks (default: 1). Use `all` / `0` to stack every candidate. With `--coverage`, gap fillers are *also* emitted as stacks from a single entity so they visually match the primary placements. |
 
 #### inject
 
@@ -860,6 +860,8 @@ python broll.py pipeline --srt video.srt --coverage 90
 python broll.py xml --map strategies_entities.json --srt video.srt --coverage 90
 ```
 Tune the crossover with `--stretch-threshold` (default 5s). Pervasive entities are preferred for filler, so generic background imagery fills gaps rather than specific people or places.
+
+When combined with `--candidates N` (or `all`), gap fillers are emitted as stacks across consecutive tracks too — one entity's candidate images form each filler stack, matching the visual grammar of the primary placements so the editor can still solo the "best" layer per filler. Filler stack height per entity is decided in `filler_stack_size()` in `tools/generate_xml.py` — tweak it to switch between permissive short-stack fillers and strict full-stack-only fillers.
 
 Or override pervasive entities:
 ```bash
