@@ -516,7 +516,12 @@ def filler_stack_size(entity_images: list, args_candidates: int,
         target = available
     else:  # args_candidates >= 2
         target = args_candidates
-    # DEFAULT POLICY (a) — permissive. Replace to pick (b) or (c).
+    # HYBRID POLICY (c) — skip entities that can't offer editor choice
+    # (single image = no alternate track to solo), otherwise allow short
+    # stacks up to what the entity has.
+    MIN_FILLER_IMAGES = 2
+    if available < MIN_FILLER_IMAGES:
+        return 0
     return max(0, min(target, available, max_tracks))
 
 
