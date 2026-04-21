@@ -58,13 +58,21 @@
 - `status` — show config, env vars, and tool availability
 
 ## Rate Limiting (in `download_wikipedia_images.py`)
-- `MAX_RETRIES = 5` — HTTP retry attempts for 429/5xx
+- `MAX_RETRIES = 5` — HTTP retry attempts for 5xx (not 429; see below)
 - `RETRY_BACKOFF_S = 0.5` — exponential backoff base for 5xx errors
-- `_429_BACKOFF_S = 2.0` — exponential backoff base for 429 rate-limit responses (worst-case ~62s total wait)
+- **429 handling is fail-fast**: honor `Retry-After` ONCE (capped at `_429_RETRY_AFTER_CAP_S = 10.0`), then raise `RateLimitedError`. Prevents multi-minute stalls on hot files behind the upload CDN.
+- `_429_BACKOFF_S = 2.0` — fallback wait when a 429 response omits `Retry-After`
 - `_RateLimiter` class — thread-safe minimum-interval enforcer using `threading.Lock` + `time.monotonic()`
 - Pipeline defaults: `--parallel 2` × `--download-workers 2` = 4 max concurrent downloads
 - `THUMBNAIL_WIDTH` global — when >0, requests `iiurlwidth` from Wikimedia API for smaller `thumburl` downloads
 - Pipeline default: `--thumbnail-width 2560` (thumbnails); standalone default: `0` (full resolution)
+
+## Download exit codes (in `download_wikipedia_images.py`)
+- `0` — at least one image downloaded successfully
+- `2` — no images; genuine failure (empty page, all filtered, etc.)
+- `3` — no images **and** at least one was rate-limited; orchestrator marks
+  the entity `download_status="rate_limited"` so `--retry-failed` can pick
+  it up in a later pass after the CDN cools.
 
 ## Disambiguation
 - `disambiguation_overrides.json` — manual entity→Wikipedia article mappings (confidence 10)

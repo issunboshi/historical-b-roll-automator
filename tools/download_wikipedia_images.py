@@ -44,7 +44,21 @@ DEFAULT_USER_AGENT = "b-roll-finder/0.1 (Wikipedia image downloader; contact: lo
 REQUEST_DELAY_S: float = 0.1
 MAX_RETRIES: int = 5
 RETRY_BACKOFF_S: float = 0.5
-_429_BACKOFF_S: float = 2.0  # longer backoff for 429 (rate limit) responses
+_429_BACKOFF_S: float = 2.0  # fallback wait when a 429 response omits Retry-After
+_429_RETRY_AFTER_CAP_S: float = 10.0  # cap on honored Retry-After; beyond this we fail fast
+
+
+class RateLimitedError(Exception):
+    """Raised when a request is rate-limited (HTTP 429) and a single honored
+    Retry-After wait did not clear the limit. Distinguished from a generic
+    failure so the orchestrator can mark the entity rate_limited and retry
+    later via --retry-failed."""
+
+    def __init__(self, url: str, retry_after: Optional[float] = None):
+        self.url = url
+        self.retry_after = retry_after
+        suffix = f" (Retry-After={retry_after:.1f}s)" if retry_after is not None else ""
+        super().__init__(f"Rate-limited (HTTP 429) fail-fast{suffix}: {url}")
 SVG_TO_PNG: bool = True
 SVG_PNG_WIDTH: int = 3000
 THUMBNAIL_WIDTH: int = 0  # 0 = full resolution; >0 requests thumburl at this px width
@@ -663,6 +677,7 @@ class _DownloadResult:
     summary_line: Optional[str] = None
     attribution_row: Optional[Dict[str, str]] = None
     converted_png: Optional[Path] = None
+    rate_limited: bool = False  # True when the failure was a 429 fail-fast
 
 
 def _execute_download(
@@ -687,6 +702,22 @@ def _execute_download(
         if rate_limiter:
             rate_limiter.wait()
         download_file(session, t.url, t.dest_path)
+    except RateLimitedError as e:
+        print(f"  [{t.task_number}/{t.limit}] Rate-limited: {t.title_key}: {e}", file=sys.stderr)
+        try:
+            append_failure_record(
+                global_failed_csv_path,
+                {
+                    "search_term": t.query,
+                    "file_title": t.title_key,
+                    "source_url": t.url or "",
+                    "reason": "rate_limited",
+                    "detail": str(e),
+                },
+            )
+        except Exception:
+            pass
+        return _DownloadResult(task=t, success=False, error=str(e), rate_limited=True)
     except Exception as e:
         print(f"  [{t.task_number}/{t.limit}] Failed: {t.title_key}: {e}", file=sys.stderr)
         try:
@@ -1087,11 +1118,17 @@ def http_get(
 ) -> requests.Response:
     """
     GET with retries, exponential backoff and jitter. Respects Retry-After.
-    Retries on 429 and common 5xx errors.
-    Uses longer backoff (_429_BACKOFF_S) for 429 rate-limit responses.
+    Retries on common 5xx errors (up to MAX_RETRIES).
+
+    429 handling is fail-fast: honor Retry-After ONCE (capped at
+    _429_RETRY_AFTER_CAP_S), then if the next attempt is still 429 raise
+    RateLimitedError. Historical 5×60s-per-image retry storms were causing
+    correct, high-confidence entities to be declared failed when the
+    upload CDN was aggressively throttling hot files.
     """
     last_exc: Optional[Exception] = None
     last_status: Optional[int] = None
+    honored_retry_after = False  # one honored wait per call; second 429 fails fast
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(url, params=params, stream=stream, timeout=timeout)
@@ -1099,17 +1136,30 @@ def http_get(
                 return resp
             last_status = resp.status_code
             if resp.status_code == 429:
-                retry_after = resp.headers.get("Retry-After")
-                sleep_s = None
-                if retry_after:
+                retry_after_raw = resp.headers.get("Retry-After")
+                retry_after: Optional[float] = None
+                if retry_after_raw:
                     try:
-                        sleep_s = float(retry_after)
+                        retry_after = float(retry_after_raw)
                     except Exception:
-                        sleep_s = None
-                if sleep_s is None:
-                    sleep_s = _429_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
-                print(f"  [retry {attempt}/{MAX_RETRIES}] 429 rate-limited, waiting {sleep_s:.1f}s: {url}", file=sys.stderr)
+                        retry_after = None
+                if honored_retry_after:
+                    # Already waited once; the server is still rate-limiting
+                    # this resource. Fail fast so the orchestrator can re-queue.
+                    print(
+                        f"  429 rate-limited (2nd attempt), failing fast: {url}",
+                        file=sys.stderr,
+                    )
+                    raise RateLimitedError(url, retry_after=retry_after)
+                sleep_s = retry_after if retry_after is not None else _429_BACKOFF_S
+                sleep_s = min(sleep_s, _429_RETRY_AFTER_CAP_S)
+                print(
+                    f"  429 rate-limited, honoring Retry-After (capped at "
+                    f"{_429_RETRY_AFTER_CAP_S:.0f}s) = {sleep_s:.1f}s: {url}",
+                    file=sys.stderr,
+                )
                 time.sleep(sleep_s)
+                honored_retry_after = True
                 continue
             if resp.status_code in (500, 502, 503, 504):
                 sleep_s = RETRY_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
@@ -1118,6 +1168,8 @@ def http_get(
                 continue
             resp.raise_for_status()
             return resp
+        except RateLimitedError:
+            raise
         except requests.RequestException as e:
             last_exc = e
             sleep_s = RETRY_BACKOFF_S * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
@@ -1175,6 +1227,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Thumbnail mode: requesting {THUMBNAIL_WIDTH}px thumbnails")
 
     any_success = False
+    any_rate_limited = False
     for term_index, query in enumerate(args.queries, start=1):
         if term_index > 1:
             print("")  # spacer between terms
@@ -1453,6 +1506,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             # Aggregate results in task_number order (preserves priority ordering)
             results.sort(key=lambda r: r.task.task_number)
             for r in results:
+                if r.rate_limited:
+                    any_rate_limited = True
                 if not r.success:
                     continue
                 t = r.task
@@ -1487,7 +1542,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         any_success = any_success or bool(summary_lines)
         time.sleep(REQUEST_DELAY_S)  # small pause between terms
 
-    return 0 if any_success else 2
+    if any_success:
+        return 0
+    # Distinguish "rate-limited, retry later" from a generic failure so the
+    # orchestrator (download_entities.py) can mark the entity rate_limited
+    # and --retry-failed can pick it up in a later pass.
+    return 3 if any_rate_limited else 2
 
 
 if __name__ == "__main__":

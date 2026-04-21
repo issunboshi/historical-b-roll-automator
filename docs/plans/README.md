@@ -12,6 +12,7 @@ Design documents for features and architectural decisions. New plans go in this 
 
 | Date | Plan | Status |
 |------|------|--------|
+| 2026-04-21 | [Honor Retry-After, Fail Fast](archive/2026-04-21-honor-retry-after-fail-fast.md) — Downloader honors `Retry-After` once then raises `RateLimitedError`; orchestrator marks entity `rate_limited` so `--retry-failed` picks it up | Completed |
 | 2026-04-18 | [Candidate Stacking](archive/2026-04-18-candidate-stacking.md) — `--candidates N` flag that stacks every candidate image on consecutive tracks for editor-side selection | Completed |
 | 2026-04-18 | [Full Coverage Mode](archive/2026-04-18-full-coverage-mode.md) — `--coverage` flag for wall-to-wall B-roll via hybrid stretch/recycle gap-filling | Completed |
 | 2026-02-10 | [Quality Improvements](archive/2026-02-10-quality-improvements.md) — Frequency capping, transcript summarization, entity deduplication, era-aware disambiguation | Completed |
