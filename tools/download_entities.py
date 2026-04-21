@@ -322,9 +322,12 @@ def download_entity(
     """
     Download images for a single entity with disambiguation support.
 
-    Returns: (entity_name, success, entity_dir, matched_term, disambiguation_result)
+    Returns: (entity_name, success, entity_dir, matched_term, disambiguation_result, rate_limited)
     - matched_term is the search term that succeeded (or None if all failed)
     - disambiguation_result contains confidence, match_quality, rationale if disambiguation was used
+    - rate_limited is True when all search terms failed because the downloader
+      subprocess exited with code 3 (HTTP 429 fail-fast). These entities are
+      eligible for `--retry-failed` in a later pass.
 
     Thread-safe: only uses safe_print for output.
     """
@@ -349,7 +352,7 @@ def download_entity(
 
         if action == "skip":
             safe_print(f"[{current_idx}/{total_entities}] Skipping {entity_name}: pre-computed skip")
-            return (entity_name, False, out_dir / safe_folder_name(entity_name), None, precomputed_disambig)
+            return (entity_name, False, out_dir / safe_folder_name(entity_name), None, precomputed_disambig, False)
 
         # Use pre-computed Wikipedia title for download
         confidence = precomputed_disambig.get("confidence", 0)
@@ -414,7 +417,7 @@ def download_entity(
             action = disambiguation_result.get("action", "download")
             if action == "skip":
                 safe_print(f"[{current_idx}/{total_entities}] Skipping {entity_name}: low confidence ({decision.confidence})")
-                return (entity_name, False, out_dir / safe_folder_name(entity_name), None, disambiguation_result)
+                return (entity_name, False, out_dir / safe_folder_name(entity_name), None, disambiguation_result, False)
 
             # Use chosen article for download
             if decision.chosen_article:
@@ -425,7 +428,7 @@ def download_entity(
         safe_print(f"[{current_idx}/{total_entities}] Skipping: {entity_name} (already downloaded)")
         # Determine matched_term from existing directory
         # Since we can't know which term was used, assume it was the entity name
-        return (entity_name, True, entity_dir, entity_name, disambiguation_result)
+        return (entity_name, True, entity_dir, entity_name, disambiguation_result, False)
 
     safe_print(f"[{current_idx}/{total_entities}] Downloading: {entity_name}")
 
@@ -433,6 +436,7 @@ def download_entity(
     # (Plan says: try ALL strategies, but in practice we should stop at first success for efficiency)
     best_title = payload.get("search_strategies", {}).get("best_title")
 
+    encountered_rate_limit = False
     for search_term in search_terms:
         safe_print(f"[{current_idx}/{total_entities}]   Trying: {search_term}")
 
@@ -452,7 +456,7 @@ def download_entity(
                         shutil.rmtree(entity_dir)
                     search_term_dir.rename(entity_dir)
                 safe_print(f"[{current_idx}/{total_entities}] Done: {entity_name} (matched: {search_term})")
-                return (entity_name, True, entity_dir, search_term, disambiguation_result)
+                return (entity_name, True, entity_dir, search_term, disambiguation_result, False)
             continue
 
         try:
@@ -511,19 +515,36 @@ def download_entity(
                         search_term_dir.rename(entity_dir)
 
                     safe_print(f"[{current_idx}/{total_entities}] Done: {entity_name} (matched: {search_term})")
-                    return (entity_name, True, entity_dir, search_term, disambiguation_result)
+                    return (entity_name, True, entity_dir, search_term, disambiguation_result, False)
                 else:
                     safe_print(f"[{current_idx}/{total_entities}]   No images found for: {search_term}")
             else:
                 safe_print(f"[{current_idx}/{total_entities}]   No output for: {search_term}")
 
         except subprocess.CalledProcessError as e:
-            safe_print(f"[{current_idx}/{total_entities}]   Failed: {search_term}")
+            # Exit code 3 from download_wikipedia_images.py means all failures
+            # were due to HTTP 429 fail-fast (rate_limited). Track so we can
+            # surface rate_limited status on the entity for --retry-failed.
+            if e.returncode == 3:
+                encountered_rate_limit = True
+                safe_print(f"[{current_idx}/{total_entities}]   Rate-limited: {search_term}")
+            else:
+                safe_print(f"[{current_idx}/{total_entities}]   Failed: {search_term}")
             continue
 
     # All search terms failed
-    safe_print(f"[{current_idx}/{total_entities}] Failed: {entity_name} - all search terms failed", file=sys.stderr)
-    return (entity_name, False, entity_dir, None, disambiguation_result)
+    if encountered_rate_limit:
+        safe_print(
+            f"[{current_idx}/{total_entities}] Rate-limited: {entity_name} - "
+            f"eligible for --retry-failed",
+            file=sys.stderr,
+        )
+    else:
+        safe_print(
+            f"[{current_idx}/{total_entities}] Failed: {entity_name} - all search terms failed",
+            file=sys.stderr,
+        )
+    return (entity_name, False, entity_dir, None, disambiguation_result, encountered_rate_limit)
 
 
 LICENSE_PRIORITY = {
@@ -637,7 +658,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("-i", "--interactive", action="store_true",
                         help="Interactively retry failed downloads with alternative search terms")
     parser.add_argument("--retry-failed", action="store_true",
-                        help="Retry only entities with download_status='failed' from a previous run")
+                        help="Retry only entities with download_status in "
+                             "{'failed', 'no_images', 'rate_limited'} from a previous run")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for downloaded images. If omitted, uses ENV/CONFIG or current directory.")
     args = parser.parse_args(argv)
@@ -712,7 +734,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if getattr(args, 'retry_failed', False):
         need_download = [
             (name, payload) for name, payload in entities.items()
-            if payload.get("download_status") in ("failed", "no_images")
+            if payload.get("download_status") in ("failed", "no_images", "rate_limited")
         ]
         if not need_download:
             print("No failed entities to retry. Nothing to do.")
@@ -803,7 +825,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print()
 
     # Track results: entity_name -> (success, entity_dir, matched_term, disambiguation_result)
-    results: Dict[str, Tuple[bool, Path, Optional[str], Optional[dict]]] = {}
+    # (success, entity_dir, matched_term, disambiguation_result, rate_limited)
+    results: Dict[str, Tuple[bool, Path, Optional[str], Optional[dict], bool]] = {}
 
     # Track elevated image count statistics
     elevated_count = 0
@@ -833,7 +856,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 montage_download_count += 1
                 safe_print(f"[{idx}/{total}]   Montage entity: downloading {entity_images} images")
 
-            name, success, entity_dir, matched_term, disambiguation_result = download_entity(
+            name, success, entity_dir, matched_term, disambiguation_result, rate_limited = download_entity(
                 entity_name=entity_name,
                 entity_type=entity_type,
                 out_dir=out_dir,
@@ -860,7 +883,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 thumbnail_width=getattr(args, 'thumbnail_width', 0),
                 force=getattr(args, 'retry_failed', False),
             )
-            results[name] = (success, entity_dir, matched_term, disambiguation_result)
+            results[name] = (success, entity_dir, matched_term, disambiguation_result, rate_limited)
     else:
         # Parallel mode using ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -918,17 +941,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             for future in as_completed(futures):
                 entity_name = futures[future]
                 try:
-                    name, success, entity_dir, matched_term, disambiguation_result = future.result()
-                    results[name] = (success, entity_dir, matched_term, disambiguation_result)
+                    name, success, entity_dir, matched_term, disambiguation_result, rate_limited = future.result()
+                    results[name] = (success, entity_dir, matched_term, disambiguation_result, rate_limited)
                 except Exception as e:
                     print(f"Error processing {entity_name}: {e}", file=sys.stderr)
-                    results[entity_name] = (False, out_dir / safe_folder_name(entity_name), None, None)
-    
+                    results[entity_name] = (False, out_dir / safe_folder_name(entity_name), None, None, False)
+
     # Interactive retry for failed downloads
     if getattr(args, 'interactive', False):
         failed_entities = [
             (name, entities[name])
-            for name, (success, _, matched_term, _) in results.items()
+            for name, (success, _, matched_term, _, _) in results.items()
             if not success and name in entities
         ]
 
@@ -969,7 +992,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elif user_input:
                     # Retry download with user-provided search term
                     safe_print(f"  Retrying {entity_name} with: {user_input}")
-                    name, success, entity_dir, matched_term, disambiguation_result = download_entity(
+                    name, success, entity_dir, matched_term, disambiguation_result, rate_limited = download_entity(
                         entity_name=entity_name,
                         entity_type=entity_type,
                         out_dir=out_dir,
@@ -996,7 +1019,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "confidence": 10,
                             "match_quality": "high",
                             "wikipedia_title": user_input,
-                        })
+                        }, rate_limited)
                         safe_print(f"  -> Success: {entity_name} ({matched_term})")
                     else:
                         safe_print(f"  -> Still no images for: {user_input}")
@@ -1023,7 +1046,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if entity_name not in results:
             continue  # Already had images
 
-        success, entity_dir, matched_term, disambiguation_result = results[entity_name]
+        success, entity_dir, matched_term, disambiguation_result, rate_limited = results[entity_name]
 
         # Track disambiguation metadata (use wikipedia_title consistently)
         if disambiguation_result:
@@ -1040,7 +1063,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not success:
             fail_count += 1
             payload["matched_strategy"] = None
-            payload["download_status"] = "failed"
+            # Distinguish rate-limited (retry later via --retry-failed) from
+            # a genuine failure (search returned nothing useful).
+            payload["download_status"] = "rate_limited" if rate_limited else "failed"
             strategy_stats["failed"] += 1
             continue
 
