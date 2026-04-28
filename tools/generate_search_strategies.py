@@ -465,6 +465,23 @@ def validate_strategies(
 
     total_entities = 0
     cache_hits = 0
+    validation_errors = 0
+
+    # Policy A (optimistic): on validator exception, keep the query and treat
+    # exists=True/canonical=None. The downstream download step does its own
+    # MediaWiki lookup with retries, so a soft failure here is recoverable.
+    def _safe_validate(title: str) -> dict:
+        nonlocal validation_errors
+        try:
+            return validator.validate(title)
+        except Exception as exc:
+            validation_errors += 1
+            print(
+                f"Warning: validation error for {title!r}: "
+                f"{type(exc).__name__}: {exc} — assuming valid",
+                file=sys.stderr,
+            )
+            return {"exists": True, "canonical_title": None, "canonical_url": None}
 
     for entity_name, entity_data in entities.items():
         search_strategies = entity_data.get("search_strategies")
@@ -482,7 +499,7 @@ def validate_strategies(
             if is_cached:
                 cache_hits += 1
 
-            result = validator.validate(best_title)
+            result = _safe_validate(best_title)
             search_strategies["best_title_valid"] = result["exists"]
             search_strategies["best_title_canonical"] = result["canonical_title"]
 
@@ -498,7 +515,7 @@ def validate_strategies(
             if is_cached:
                 cache_hits += 1
 
-            result = validator.validate(query)
+            result = _safe_validate(query)
             validated_queries.append({
                 "query": query,
                 "valid": result["exists"],
@@ -520,7 +537,13 @@ def validate_strategies(
             search_strategies["queries"] = [entity_name]
             search_strategies["status"] = "fallback"
 
-    print(f"Validation complete: {total_entities} entities validated, {cache_hits} cache hits", file=sys.stderr)
+    summary = (
+        f"Validation complete: {total_entities} entities validated, "
+        f"{cache_hits} cache hits"
+    )
+    if validation_errors:
+        summary += f", {validation_errors} API errors (kept as valid)"
+    print(summary, file=sys.stderr)
 
     return enriched_map
 
@@ -528,6 +551,25 @@ def validate_strategies(
 # =============================================================================
 # CLI Interface
 # =============================================================================
+
+
+def _write_strategies_atomic(out_path: str, result: dict) -> None:
+    """Atomically write strategies JSON to ``out_path``.
+
+    Used twice in main(): once before validation (preserves LLM output if the
+    validator crashes catastrophically) and once after (with validated form).
+    """
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(out_dir, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(suffix=".json", dir=out_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, out_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
 
 
 def main(argv: List[str] = None) -> int:
@@ -660,6 +702,11 @@ def main(argv: List[str] = None) -> int:
         print("Warning: No entities found in enriched_map", file=sys.stderr)
         # Write output with no changes
         result = enriched_map
+        try:
+            _write_strategies_atomic(out_path, result)
+        except Exception as e:
+            print(f"Error: Failed to write {out_path}: {e}", file=sys.stderr)
+            return 1
     else:
         # Generate search strategies
         try:
@@ -675,34 +722,36 @@ def main(argv: List[str] = None) -> int:
             print(f"Error: Failed to generate strategies: {e}", file=sys.stderr)
             return 1
 
-        # Validate strategies
+        # Persist the unvalidated LLM output BEFORE validation so a catastrophic
+        # validator failure doesn't force a re-run of the (expensive) LLM step.
+        try:
+            _write_strategies_atomic(out_path, result)
+        except Exception as e:
+            print(f"Error: Failed to write {out_path}: {e}", file=sys.stderr)
+            return 1
+
+        # Validate strategies (per-title errors are caught inside; this outer
+        # try is a safety net for catastrophic failures like cache corruption).
         try:
             validator = WikipediaValidator(cache_dir=args.cache_dir)
             result = validate_strategies(result, validator)
         except Exception as e:
-            print(f"Error: Failed to validate strategies: {e}", file=sys.stderr)
-            return 1
+            print(
+                f"Warning: validation pass aborted ({type(e).__name__}: {e}); "
+                f"keeping unvalidated strategies on disk",
+                file=sys.stderr,
+            )
+            # Unvalidated file is already on disk. Exit success so the
+            # orchestrator marks the step complete and --resume skips the LLM
+            # call on the next run.
+            return 0
 
-    # Write output atomically (temp file + rename)
-    out_dir = os.path.dirname(os.path.abspath(out_path))
-    os.makedirs(out_dir, exist_ok=True)
-
-    try:
-        # Write to temp file first
-        fd, temp_path = tempfile.mkstemp(suffix=".json", dir=out_dir)
+        # Re-write with validated result.
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-            # Atomic rename
-            os.replace(temp_path, out_path)
-        except Exception:
-            # Clean up temp file on error
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise
-    except Exception as e:
-        print(f"Error: Failed to write {out_path}: {e}", file=sys.stderr)
-        return 1
+            _write_strategies_atomic(out_path, result)
+        except Exception as e:
+            print(f"Error: Failed to write {out_path}: {e}", file=sys.stderr)
+            return 1
 
     # Success summary
     entity_count = len(result.get("entities", {}))
