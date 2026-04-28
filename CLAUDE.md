@@ -78,3 +78,9 @@
 - `disambiguation_overrides.json` — manual entity→Wikipedia article mappings (confidence 10)
 - `--interactive` flag pauses for human review of uncertain/failed entities
 - `disambiguation_review.json` — entities flagged for review (confidence 4-6)
+
+## Strategy Validation (in `generate_search_strategies.py`)
+- `validate_strategies()` calls `WikipediaValidator.validate()` per query. The underlying `wikipediaapi` does an unguarded `r.json()` (`__init__.py:540`); empty/HTML responses from Wikipedia's edge raise `json.JSONDecodeError`.
+- **Per-title errors are caught (Policy A optimistic)**: on exception, the query is kept as `valid=True, canonical=None` and a warning is logged. The downstream `download` step does its own MediaWiki lookup with retries, so soft failures here are recoverable.
+- **Two-phase atomic write**: `strategies_entities.json` is written once *before* validation (preserving LLM output) and again after with validated form. If validation aborts catastrophically, the unvalidated file is on disk and the script exits 0 — `--resume` then skips the expensive LLM regeneration.
+- Cache dir defaults to `/tmp/wikipedia_cache` (overridable via `--cache-dir`).
